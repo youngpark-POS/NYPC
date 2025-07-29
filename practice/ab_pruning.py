@@ -57,9 +57,9 @@ class Game:
             return self._calculate_board_value(), best_move
 
         for r1 in range(BOARD_ROW):
-            for r2 in range(r1 + 1, BOARD_ROW):
-                for c1 in range(BOARD_COLUMN):
-                    for c2 in range(c1 + 1, BOARD_COLUMN):
+            for c1 in range(BOARD_COLUMN):
+                for r2 in range(r1, BOARD_ROW):
+                    for c2 in range(c1, BOARD_COLUMN):
                         if not self._isValid(r1, c1, r2, c2):
                             continue
 
