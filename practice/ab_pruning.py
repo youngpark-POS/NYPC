@@ -2,27 +2,27 @@ import math
 
 from copy import deepcopy
 
-
-# ================================
-# Game 클래스: 게임 상태 관리
-# ================================
-
 """
 
 Team 'The geek diaries / 공대생의 혼잣말'
 Juwon Kim, Junhyeok Lim, Yeongjae Park
 
 CAUTION: Whenever using print() method, don't forget to set flush argument to True
-so as to avoid TLE  e.g. print(*args, flush=True)
+so as to avoid TLE e.g. print(*args, flush=True)
 
 """
 
-GAMETREE_SEARCH_DEPTH = 2
+GAMETREE_SEARCH_DEPTH = 3
 BOARD_ROW = 9
 BOARD_COLUMN = 16
 
 
 class Game:
+
+    def __init__(self, board, first):
+        self.board = board
+        self.territory_board = [[0 for _ in board[0]] for _ in board]
+        self.first = first
 
     def _calculate_board_value(self):
         return sum([sum(row) for row in self.territory_board])
@@ -44,8 +44,6 @@ class Game:
             depth: Current searching depth. The search terminates when this value reached GAMETREE_SEARCH_DEPTH.
         Returns:
             First integer represents the value of this state, and following list represents the best move.
-        Raises:
-            This method raises no exceptions.
 
         """
 
@@ -68,7 +66,7 @@ class Game:
                         is_terminal = False
 
                         self.updateMove(r1, c1, r2, c2, is_max_player)
-                        state_value = self._simulate(
+                        state_value, _best_move = self._simulate(
                             alpha, beta, not is_max_player, depth + 1
                         )
 
@@ -89,17 +87,22 @@ class Game:
                             return best_value, best_move
 
         if is_terminal:
-            return self._calculate_board_value(), best_move
+            return self._calculate_board_value(), [-1, -1, -1, -1]
         else:
             return best_value, best_move
 
-    def __init__(self, board, first):
-        self.board = board
-        self.territory_board = [[0 for _ in board[0]] for _ in board]
-        self.first = first
-
     # 사각형 (r1, c1) ~ (r2, c2)이 유효한지 검사 (합이 10이고, 네 변을 모두 포함)
     def _isValid(self, r1, c1, r2, c2) -> bool:
+        """
+        Returns if given rectangle is selectable
+
+        Args:
+            r1, c1: The coordinate of left-upper point
+            r2, c2: The coordinate of right-lower point
+
+        Returns:
+            True if the given rectangle is selectable. False otherwise.
+        """
         sums = 0
         r1fit = c1fit = r2fit = c2fit = False
 
@@ -108,7 +111,7 @@ class Game:
                 if self.board[r][c] != 0:
                     sums += self.board[r][c]
                     if sums > 10:
-                        break
+                        return False
                     if r == r1:
                         r1fit = True
                     if r == r2:
@@ -120,13 +123,18 @@ class Game:
         return sums == 10 and r1fit and r2fit and c1fit and c2fit
 
     def calculateMove(self, _myTime, _oppTime) -> list[int]:
-        best_value, best_move = self._simulate(
-            -math.inf, math.inf, True, GAMETREE_SEARCH_DEPTH
-        )
-        if self._calculate_board_value() > best_value:
-            return [-1, -1, -1, -1]
-        else:
-            return best_move
+        """
+        Calculate the best move of current state
+
+        Args:
+            _myTime: Time last for this player, unused
+            _oppTime: Time last for opposite player, unused
+
+        Returns:
+            r1, c1, r2, c2: Coordinates of the best move
+        """
+        _best_value, best_move = self._simulate(-math.inf, math.inf, True, 0)
+        return best_move
 
     def updateOpponentAction(self, action, _time) -> None:
         self.updateMove(*action, False)
