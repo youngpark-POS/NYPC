@@ -12,17 +12,20 @@ so as to avoid TLE e.g. print(*args, flush=True)
 
 """
 
-GAMETREE_SEARCH_DEPTH = 3
-BOARD_ROW = 9
-BOARD_COLUMN = 16
+GAMETREE_SEARCH_DEPTH = 2
+BOARD_ROW = 10
+BOARD_COLUMN = 17
+MOVE_PASS = [-1, -1, -1, -1]
 
 
 class Game:
 
     def __init__(self, board, first):
         self.board = board
-        self.territory_board = [[0 for _ in board[0]] for _ in board]
-        self.first = first
+        self.territory_board = [
+            [0 for _ in range(BOARD_COLUMN)] for _ in range(BOARD_ROW)
+        ]
+        # self.first = first
 
     def _calculate_board_value(self):
         return sum([sum(row) for row in self.territory_board])
@@ -31,7 +34,7 @@ class Game:
         self,
         alpha: int,
         beta: int,
-        is_max_player: int,
+        is_max_player: bool,
         depth: int,
     ) -> list[int | list[int]]:
         """
@@ -49,16 +52,16 @@ class Game:
 
         original_board = deepcopy(self.board)
         original_territory_board = deepcopy(self.territory_board)
+        best_move = MOVE_PASS
         best_value = -math.inf if is_max_player else math.inf
-        best_move = [-1, -1, -1, -1]
         is_terminal = True
 
         if depth == GAMETREE_SEARCH_DEPTH:  #  In case of maximum searching depth
             return self._calculate_board_value(), best_move
 
         for r1 in range(BOARD_ROW):
-            for c1 in range(BOARD_COLUMN):
-                for r2 in range(r1, BOARD_ROW):
+            for r2 in range(r1, BOARD_ROW):
+                for c1 in range(BOARD_COLUMN):
                     for c2 in range(c1, BOARD_COLUMN):
                         if not self._isValid(r1, c1, r2, c2):
                             continue
@@ -71,12 +74,12 @@ class Game:
                         )
 
                         if is_max_player and state_value > best_value:
-                            best_move = [r1, c1, r2, c2]
                             best_value = state_value
+                            best_move = [r1, c1, r2, c2]
                             alpha = max(alpha, state_value)
                         if not is_max_player and state_value < best_value:
-                            best_move = [r1, c1, r2, c2]
                             best_value = state_value
+                            best_move = [r1, c1, r2, c2]
                             beta = min(beta, state_value)
 
                         self.restoreMove(
@@ -87,7 +90,7 @@ class Game:
                             return best_value, best_move
 
         if is_terminal:
-            return self._calculate_board_value(), [-1, -1, -1, -1]
+            return self._calculate_board_value(), MOVE_PASS
         else:
             return best_value, best_move
 
@@ -139,6 +142,14 @@ class Game:
     def updateOpponentAction(self, action, _time) -> None:
         self.updateMove(*action, False)
 
+    def updateMove(self, r1, c1, r2, c2, is_max_player) -> None:
+        if r1 == c1 == r2 == c2 == -1:
+            return
+        for r in range(r1, r2 + 1):
+            for c in range(c1, c2 + 1):
+                self.board[r][c] = 0
+                self.territory_board[r][c] = 1 if is_max_player else -1
+
     def restoreMove(
         self, r1, c1, r2, c2, original_board, original_territory_board
     ) -> None:
@@ -149,18 +160,7 @@ class Game:
                 self.board[r][c] = original_board[r][c]
                 self.territory_board[r][c] = original_territory_board[r][c]
 
-    def updateMove(self, r1, c1, r2, c2, is_max_player) -> None:
-        if r1 == c1 == r2 == c2 == -1:
-            return
-        for r in range(r1, r2 + 1):
-            for c in range(c1, c2 + 1):
-                self.board[r][c] = 0
-                self.territory_board[r][c] = 1 if is_max_player else -1
 
-
-# ================================
-# main(): 입출력 처리 및 게임 진행
-# ================================
 def main():
     while True:
         line = input().split()
