@@ -89,7 +89,7 @@ class Player:
 def read_settings():
     settings = {}
     try:
-        with open("setting.ini", "r") as f:
+        with open("practice/testing/setting.ini", "r") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#"):
