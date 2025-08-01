@@ -117,3 +117,28 @@ All agents inherit from `BaseAgent` with standard protocol communication:
 - **Not Measured**: Game win/loss ratios against simple baseline AI
 - **Testing Context**: Performance comparisons against simple example code are not meaningful for optimization purposes
 - **Focus**: Minimize computational resources while maintaining reasonable move quality
+
+## AlphaZero Framework Issues Identified & Fixed
+
+### Core Issue: Policy Loss NaN Problem
+**Problem**: Policy loss was returning NaN during training due to improper KL divergence calculation
+- Original approach used full action space (8246) with -inf masking
+- KL divergence with -inf values in softmax caused NaN gradients
+
+**Root Cause**: 
+- `F.kl_div()` with masked logits containing -inf values
+- Target distribution had zeros in most positions (8246-N positions were 0)
+- log_softmax(-inf) = -inf, causing NaN in KL divergence computation
+
+**Solution**: 
+- Extract only valid action indices and compute loss on reduced space
+- Use cross-entropy style loss: `-sum(target * log_softmax(logits))`
+- No more -inf masking, work with valid actions subset only
+
+### Secondary Issues Fixed:
+1. **MCTS Policy Normalization**: Simplified to use visit counts directly
+2. **Over-engineering**: Removed excessive validation and fallback logic
+3. **Data Processing**: Streamlined dataset creation without redundant checks
+
+### Key Learning: 
+Simple, direct approaches work better than complex safety-first implementations. The core mathematical operation (KL divergence) was the real issue, not edge cases.

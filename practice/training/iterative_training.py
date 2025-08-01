@@ -15,6 +15,7 @@ import pickle
 import time
 import json
 import shutil
+import numpy as np
 from typing import List, Dict, Any, Tuple
 from pathlib import Path
 
@@ -57,14 +58,8 @@ class SelfPlayDataset(Dataset):
     """Dataset for training on self-play data."""
     
     def __init__(self, data_points: List[SelfPlayDataPoint]):
-        self.data_points = []
-        
-        # Filter and validate data points
-        for dp in data_points:
-            if len(dp.valid_moves) > 0 and dp.mcts_policy.sum() > 0:
-                self.data_points.append(dp)
-        
-        print(f"SelfPlayDataset: {len(self.data_points)} valid training examples")
+        self.data_points = data_points
+        print(f"SelfPlayDataset: {len(self.data_points)} training examples")
     
     def __len__(self):
         return len(self.data_points)
@@ -151,8 +146,10 @@ class IterativeTrainer:
         model = model.to(self.device)
         optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         
+        # Cosine annealing scheduler
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=learning_rate*0.01)
+        
         # Loss functions
-        policy_loss_fn = nn.CrossEntropyLoss()
         value_loss_fn = nn.MSELoss()
         
         model.train()
@@ -164,7 +161,7 @@ class IterativeTrainer:
             num_batches = 0
             
             for batch in dataloader:
-                features = batch['features'].to(self.device)  # (batch_size, 7, 10, 17)
+                features = batch['features'].to(self.device)  # (batch_size, 2, 10, 17)
                 policy_targets = batch['policy_target']  # List of tensors (variable length)
                 value_targets = batch['value_target'].to(self.device)  # (batch_size, 1)
                 valid_moves_batch = batch['valid_moves']
@@ -178,24 +175,17 @@ class IterativeTrainer:
                 
                 for i in range(len(features)):
                     sample_features = features[i:i+1]
-                    sample_policy_target = policy_targets[i].to(self.device)  # Move to device
+                    sample_policy_target = policy_targets[i].to(self.device)
                     sample_value_target = value_targets[i]
                     sample_valid_moves = valid_moves_batch[i]
                     
                     # Get model predictions
-                    policy_scores, value_pred = model(sample_features, sample_valid_moves)
+                    policy_scores, value_pred = model(sample_features)
                     
-                    # Policy loss (cross-entropy between MCTS policy and model policy)
-                    if policy_scores is not None and len(sample_policy_target) == policy_scores.shape[1]:
-                        policy_probs = F.softmax(policy_scores, dim=1)
-                        # Use KL divergence loss instead of cross-entropy
-                        policy_loss = F.kl_div(
-                            F.log_softmax(policy_scores, dim=1),
-                            sample_policy_target.unsqueeze(0),
-                            reduction='batchmean'
-                        )
-                    else:
-                        policy_loss = torch.tensor(0.0, device=self.device)
+                    # Policy loss using masked softmax
+                    policy_loss = self._compute_policy_loss(
+                        policy_scores, sample_policy_target, sample_valid_moves
+                    )
                     
                     # Value loss (MSE between game outcome and predicted value)
                     value_loss = value_loss_fn(value_pred, sample_value_target.unsqueeze(0))
@@ -207,30 +197,66 @@ class IterativeTrainer:
                     batch_policy_losses.append(policy_loss)
                     batch_value_losses.append(value_loss)
                 
-                if batch_losses:
-                    batch_loss = torch.stack(batch_losses).mean()
-                    batch_policy_loss = torch.stack(batch_policy_losses).mean()
-                    batch_value_loss = torch.stack(batch_value_losses).mean()
-                    
-                    batch_loss.backward()
-                    optimizer.step()
-                    
-                    total_loss += batch_loss.item()
-                    policy_loss_sum += batch_policy_loss.item()
-                    value_loss_sum += batch_value_loss.item()
-                    num_batches += 1
+                batch_loss = torch.stack(batch_losses).mean()
+                batch_policy_loss = torch.stack(batch_policy_losses).mean()
+                batch_value_loss = torch.stack(batch_value_losses).mean()
+                
+                batch_loss.backward()
+                optimizer.step()
+                
+                total_loss += batch_loss.item()
+                policy_loss_sum += batch_policy_loss.item()
+                value_loss_sum += batch_value_loss.item()
+                num_batches += 1
+            
+            # Step scheduler after each epoch
+            scheduler.step()
             
             # Print epoch results
             if num_batches > 0:
                 avg_loss = total_loss / num_batches
                 avg_policy_loss = policy_loss_sum / num_batches
                 avg_value_loss = value_loss_sum / num_batches
+                current_lr = scheduler.get_last_lr()[0]
                 
                 print(f"Epoch {epoch+1}/{num_epochs}: "
-                      f"Loss={avg_loss:.4f} (Policy={avg_policy_loss:.4f}, Value={avg_value_loss:.4f})")
+                      f"Loss={avg_loss:.4f} (Policy={avg_policy_loss:.4f}, Value={avg_value_loss:.4f}) "
+                      f"LR={current_lr:.6f}")
         
         print("Training completed!")
         return model
+    
+    def _compute_policy_loss(self, policy_scores, sample_policy_target, sample_valid_moves):
+        """Compute policy loss using masked softmax."""
+        from core.action_space import get_action_space
+        action_space = get_action_space()
+        
+        # Create mask for valid actions only
+        valid_indices = []
+        valid_targets = []
+        
+        for i, move in enumerate(sample_valid_moves):
+            action_idx = action_space.action_to_index_map(move)
+            if action_idx >= 0 and i < len(sample_policy_target):
+                valid_indices.append(action_idx)
+                valid_targets.append(sample_policy_target[i])
+        
+        if not valid_indices:
+            return torch.tensor(0.0, device=self.device)
+        
+        # Extract logits for valid actions only
+        valid_logits = policy_scores[0, valid_indices]  # Shape: [num_valid_actions]
+        valid_targets_tensor = torch.tensor(valid_targets, device=self.device)  # Shape: [num_valid_actions]
+        
+        # Apply softmax to valid actions only
+        log_probs = F.log_softmax(valid_logits, dim=0)
+        
+        # KL divergence: sum(target * log(target/pred))
+        # = sum(target * (log(target) - log(pred)))
+        # Since we want KL(target || pred), use target as weights for log_probs
+        policy_loss = -torch.sum(valid_targets_tensor * log_probs)
+        
+        return policy_loss
     
     def evaluate_model(self, 
                       model: AlphaZeroNet,

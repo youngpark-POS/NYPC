@@ -208,7 +208,7 @@ class AlphaGame:
             # Debug: show network predictions if available
             if self.use_combined_net:
                 try:
-                    features = self.game_board.to_neural_features()
+                    features = self.game_board.to_neural_features(self.current_player)
                     move_probs, win_prob = self._combined_net_inference(features, valid_moves)
                     if best_move in move_probs:
                         print(f"Network: win_prob={win_prob:.3f}, move_prior={move_probs[best_move]:.3f}", file=sys.stderr)
@@ -216,7 +216,7 @@ class AlphaGame:
                     pass
             elif self.use_neural_net:
                 try:
-                    features = self.game_board.to_neural_features()
+                    features = self.game_board.to_neural_features(self.current_player)
                     win_prob = self._value_evaluation(features, self.current_player)
                     print(f"Value network: win_prob={win_prob:.3f}", file=sys.stderr)
                 except:

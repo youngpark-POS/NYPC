@@ -4,10 +4,20 @@ AlphaZero Neural Network for NYPC Mushroom Game
 
 Unified neural network combining policy and value prediction in AlphaZero style.
 Single network with shared ResNet backbone and separate policy/value heads.
+Uses fixed action space with masking for policy prediction.
 """
 
 import numpy as np
 from typing import Tuple, List, Dict
+
+try:
+    from .action_space import get_action_space, mask_logits
+except ImportError:
+    # Handle both relative and absolute imports
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(__file__))
+    from action_space import get_action_space, mask_logits
 
 try:
     import torch
@@ -18,158 +28,136 @@ except ImportError:
     TORCH_AVAILABLE = False
 
 
-class ResNetBlock(nn.Module):
-    """Basic ResNet block with skip connections."""
+class ResidualBlock(nn.Module):
+    """Residual block with conv-bn-relu-conv-bn structure."""
     
-    def __init__(self, channels: int):
-        super(ResNetBlock, self).__init__()
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
+    def __init__(self, channels: int = 64):
+        super(ResidualBlock, self).__init__()
+        
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(channels)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
         self.bn2 = nn.BatchNorm2d(channels)
         
     def forward(self, x):
         residual = x
-        out = F.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        out += residual
-        return F.relu(out)
+        
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = F.relu(out)
+        
+        out = self.conv2(out)
+        out = self.bn2(out)
+        
+        # Skip connection
+        out = out + residual
+        out = F.relu(out)
+        
+        return out
 
 
 class AlphaZeroNet(nn.Module):
     """
-    AlphaZero-style neural network with unified policy-value prediction.
+    AlphaZero-style neural network with convolutional architecture.
     
     Architecture:
-    - Shared ResNet backbone for spatial feature extraction
+    - 2-channel input (10x17): mushroom values + territory map
+    - Shared ConvNet backbone with residual blocks
     - Policy head for move probability prediction  
     - Value head for position evaluation
-    - Automatic device management
     """
     
-    def __init__(self, input_channels: int = 7, hidden_channels: int = 64, num_blocks: int = 4):
+    def __init__(self, input_channels: int = 2, num_blocks: int = 2, filters: int = 64):
         super(AlphaZeroNet, self).__init__()
         
         # Input dimensions
         self.input_channels = input_channels
         self.board_height = 10
         self.board_width = 17
-        self.hidden_channels = hidden_channels
+        self.filters = filters
         
-        # Shared CNN backbone
-        self.conv_input = nn.Conv2d(input_channels, hidden_channels, kernel_size=3, padding=1, bias=False)
-        self.bn_input = nn.BatchNorm2d(hidden_channels)
+        # Get action space
+        self.action_space = get_action_space()
+        self.num_actions = self.action_space.num_actions
         
-        # Shared ResNet blocks
-        self.resnet_blocks = nn.ModuleList([
-            ResNetBlock(hidden_channels) for _ in range(num_blocks)
+        # Initial convolution block
+        self.initial_conv = nn.Sequential(
+            nn.Conv2d(input_channels, filters, kernel_size=3, padding=1),
+            nn.BatchNorm2d(filters),
+            nn.ReLU()
+        )
+        
+        # Residual tower
+        self.residual_blocks = nn.ModuleList([
+            ResidualBlock(filters) for _ in range(num_blocks)
         ])
         
         # Policy head
-        self.policy_global_pool = nn.AdaptiveAvgPool2d(1)
-        self.policy_global_fc = nn.Linear(hidden_channels, 32)
-        self.policy_action_scorer = nn.Sequential(
-            nn.Linear(32 + 8, 16),  # 32 global + 8 action features
-            nn.ReLU(),
-            nn.Linear(16, 1)
+        self.policy_conv = nn.Sequential(
+            nn.Conv2d(filters, 2, kernel_size=1),
+            nn.BatchNorm2d(2),
+            nn.ReLU()
         )
+        self.policy_fc = nn.Linear(2 * self.board_height * self.board_width, self.num_actions)
         
         # Value head
-        self.value_conv = nn.Conv2d(hidden_channels, 32, kernel_size=1, bias=False)
-        self.value_bn = nn.BatchNorm2d(32)
-        self.value_global_pool = nn.AdaptiveAvgPool2d(1)
-        self.value_head = nn.Sequential(
-            nn.Linear(32, 64),
+        self.value_conv = nn.Sequential(
+            nn.Conv2d(filters, 1, kernel_size=1),
+            nn.BatchNorm2d(1),
+            nn.ReLU()
+        )
+        self.value_fc = nn.Sequential(
+            nn.Linear(self.board_height * self.board_width, 64),
             nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(32, 1),
+            nn.Linear(64, 1),
             nn.Tanh()
         )
-        
-        # Dropout for regularization
-        self.dropout = nn.Dropout(0.1)
     
     @property
     def device(self):
         """Get the device this model is on."""
         return next(self.parameters()).device
     
-    def forward(self, board_features: torch.Tensor, valid_moves: List = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, board_features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass for both policy and value prediction.
         
         Args:
-            board_features: (batch_size, 7, 10, 17) board features
-            valid_moves: List of valid moves for policy scoring (optional)
+            board_features: (batch_size, 2, 10, 17) board features
             
         Returns:
-            Tuple of (policy_scores, value_predictions)
-            - policy_scores: (batch_size, num_valid_moves) if valid_moves provided, else None
+            Tuple of (policy_logits, value_predictions)
+            - policy_logits: (batch_size, num_actions) raw logits for all actions
             - value_predictions: (batch_size, 1)
         """
-        batch_size = board_features.shape[0]
-        
         # Ensure input is on the same device as model
-        board_features = board_features.to(self.device)
+        x = board_features.to(self.device)
         
-        # Shared feature extraction
-        x = F.relu(self.bn_input(self.conv_input(board_features)))
+        # Initial convolution
+        x = self.initial_conv(x)  # (batch_size, filters, 10, 17)
         
-        # Shared ResNet blocks
-        for block in self.resnet_blocks:
+        # Residual tower
+        for block in self.residual_blocks:
             x = block(x)
         
         # Policy head
-        policy_scores = None
-        if valid_moves is not None:
-            policy_features = self.policy_global_pool(x).flatten(1)  # (batch_size, hidden_channels)
-            policy_features = F.relu(self.policy_global_fc(policy_features))  # (batch_size, 32)
-            policy_features = self.dropout(policy_features)
-            
-            # Score each valid move
-            action_scores = []
-            for move in valid_moves:
-                r1, c1, r2, c2 = move
-                
-                if r1 == -1:  # Pass move
-                    action_feats = torch.zeros(batch_size, 8, device=self.device)
-                else:
-                    # Rectangle features
-                    width = c2 - c1 + 1
-                    height = r2 - r1 + 1
-                    area = width * height
-                    center_r = (r1 + r2) / 2.0 / 10.0
-                    center_c = (c1 + c2) / 2.0 / 17.0
-                    
-                    action_feats = torch.tensor([
-                        width / 17.0, height / 10.0, area / 170.0, center_r, center_c,
-                        r1 / 10.0, c1 / 17.0, 1.0
-                    ], device=self.device).unsqueeze(0).expand(batch_size, -1)
-                
-                # Combine and score
-                combined_feats = torch.cat([policy_features, action_feats], dim=1)
-                score = self.policy_action_scorer(combined_feats)
-                action_scores.append(score)
-            
-            if action_scores:
-                policy_scores = torch.cat(action_scores, dim=1)  # (batch_size, num_valid_moves)
+        policy_conv_out = self.policy_conv(x)  # (batch_size, 2, 10, 17)
+        policy_flat = policy_conv_out.flatten(1)  # (batch_size, 2*10*17)
+        policy_logits = self.policy_fc(policy_flat)  # (batch_size, num_actions)
         
         # Value head
-        value_x = F.relu(self.value_bn(self.value_conv(x)))
-        value_x = self.value_global_pool(value_x).flatten(1)  # (batch_size, 32)
-        value_predictions = self.value_head(value_x)  # (batch_size, 1)
+        value_conv_out = self.value_conv(x)  # (batch_size, 1, 10, 17)
+        value_flat = value_conv_out.flatten(1)  # (batch_size, 1*10*17)
+        value_predictions = self.value_fc(value_flat)  # (batch_size, 1)
         
-        return policy_scores, value_predictions
+        return policy_logits, value_predictions
     
     def predict_policy_value(self, board_features: np.ndarray, valid_moves: List) -> Tuple[Dict, float]:
         """
         Predict both policy and value for a single board state.
         
         Args:
-            board_features: (10, 17, 7) numpy array
+            board_features: (10, 17, 2) numpy array
             valid_moves: List of valid moves
             
         Returns:
@@ -183,14 +171,27 @@ class AlphaZeroNet(nn.Module):
             # Convert to tensor and ensure correct device
             board_tensor = torch.from_numpy(board_features).permute(2, 0, 1).unsqueeze(0).float().to(self.device)
             
-            policy_scores, value_pred = self.forward(board_tensor, valid_moves)
+            policy_logits, value_pred = self.forward(board_tensor)
             
-            # Convert policy scores to probabilities
-            if policy_scores is not None:
-                probs = F.softmax(policy_scores, dim=1)[0].cpu().numpy()
-                move_probs = dict(zip(valid_moves, probs))
-            else:
-                move_probs = {}
+            # Apply masking to get valid probabilities
+            policy_logits_np = policy_logits[0].cpu().numpy()  # (num_actions,)
+            masked_logits = mask_logits(policy_logits_np, valid_moves)
+            
+            # Convert to probabilities
+            masked_logits_tensor = torch.from_numpy(masked_logits).to(self.device)
+            probs = F.softmax(masked_logits_tensor, dim=0).cpu().numpy()
+            
+            # Create move probabilities dictionary
+            move_probs = {}
+            for move in valid_moves:
+                action_idx = self.action_space.action_to_index_map(move)
+                if action_idx >= 0:
+                    move_probs[move] = float(probs[action_idx])
+            
+            # Normalize to ensure probabilities sum to 1
+            total_prob = sum(move_probs.values())
+            if total_prob > 0:
+                move_probs = {move: prob/total_prob for move, prob in move_probs.items()}
             
             win_prob = float(value_pred.item())
             
@@ -201,7 +202,7 @@ class AlphaZeroNet(nn.Module):
         Predict the best move for a single board state.
         
         Args:
-            board_features: (10, 17, 7) numpy array
+            board_features: (10, 17, 2) numpy array
             valid_moves: List of valid moves
             
         Returns:
@@ -220,36 +221,39 @@ class AlphaZeroNet(nn.Module):
         return best_move
 
 
-def create_alphazero_net(device: str = 'cpu', input_channels: int = 7, 
-                        hidden_channels: int = 64, num_blocks: int = 4) -> AlphaZeroNet:
+def create_alphazero_net(device: str = 'cpu', input_channels: int = 2, 
+                        num_blocks: int = 2, filters: int = 64) -> AlphaZeroNet:
     """
-    Create and initialize an AlphaZero neural network.
+    Create and initialize an AlphaZero convolutional neural network.
     
     Args:
         device: Device to place the model on ('cpu' or 'cuda')
-        input_channels: Number of input channels (default 7 for board features)
-        hidden_channels: Hidden channels in ResNet blocks
-        num_blocks: Number of ResNet blocks
+        input_channels: Number of input channels (default 2 for board features)
+        num_blocks: Number of residual blocks (default 2)
+        filters: Number of filters in conv layers (default 64)
         
     Returns:
         Initialized AlphaZeroNet on specified device
     """
     model = AlphaZeroNet(
         input_channels=input_channels,
-        hidden_channels=hidden_channels,
-        num_blocks=num_blocks
+        num_blocks=num_blocks,
+        filters=filters
     )
     
     # Initialize weights
     for m in model.modules():
         if isinstance(m, nn.Conv2d):
             nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.BatchNorm2d):
             nn.init.constant_(m.weight, 1)
             nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.Linear):
-            nn.init.normal_(m.weight, 0, 0.01)
-            nn.init.constant_(m.bias, 0)
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
     
     return model.to(device)
 
@@ -271,17 +275,17 @@ def test_alphazero_net():
         
         # Test with dummy data
         batch_size = 2
-        board_features = torch.randn(batch_size, 7, 10, 17)
+        board_features = torch.randn(batch_size, 2, 10, 17)
         valid_moves = [(0, 0, 0, 1), (1, 1, 1, 2), (-1, -1, -1, -1)]  # Two rects + pass
         
         # Forward pass
-        policy_scores, value_preds = model(board_features, valid_moves)
+        policy_logits, value_preds = model(board_features)
         print(f"✓ Forward pass successful:")
-        print(f"   Policy scores: {policy_scores.shape}")
+        print(f"   Policy logits: {policy_logits.shape}")
         print(f"   Value predictions: {value_preds.shape}, range: [{value_preds.min():.3f}, {value_preds.max():.3f}]")
         
         # Test single prediction
-        single_features = torch.randn(10, 17, 7).numpy()
+        single_features = torch.randn(10, 17, 2).numpy()
         move_probs, win_prob = model.predict_policy_value(single_features, valid_moves)
         print(f"✓ Single prediction successful:")
         print(f"   Win probability: {win_prob:.3f}")

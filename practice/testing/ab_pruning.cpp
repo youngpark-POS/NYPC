@@ -84,9 +84,9 @@ public:
 
     int getSearchDepth() {
         if (turn_count <= 10) return 4;
-        if (turn_count <= 20) return 5;
-        if (turn_count <= 30) return 6;
-        return 7;
+        if (turn_count <= 20) return 4;
+        if (turn_count <= 30) return 5;
+        return 6;
     }
 
     // returns {best_value, r1, c1, r2, c2}

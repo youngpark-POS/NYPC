@@ -103,7 +103,7 @@ class MCTSDataGenerator:
                 if len(valid_moves) == 1 and valid_moves[0] == (-1, -1, -1, -1):
                     # Only pass move available - create minimal training data
                     selected_move = (-1, -1, -1, -1)
-                    board_features = game_board.to_neural_features()
+                    board_features = game_board.to_neural_features(current_player)
                     move_probs = np.array([1.0])  # 100% probability for pass
                     
                     data_point = TrainingDataPoint(
@@ -131,7 +131,7 @@ class MCTSDataGenerator:
                     move_probs = self._visit_counts_to_probabilities(visit_counts, current_temp)
                     
                     # Store training data point
-                    board_features = game_board.to_neural_features()
+                    board_features = game_board.to_neural_features(current_player)
                     data_point = TrainingDataPoint(
                         board_features=board_features,
                         move_probabilities=move_probs,

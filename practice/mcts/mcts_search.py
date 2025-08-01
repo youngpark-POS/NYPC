@@ -162,7 +162,7 @@ class MCTSSearch:
             try:
                 # Try different feature formats for compatibility
                 if hasattr(node.state, 'to_neural_features'):
-                    features = node.state.to_neural_features()
+                    features = node.state.to_neural_features(node.player)
                 else:
                     features = node.state.to_features()
                 

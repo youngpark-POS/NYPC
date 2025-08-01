@@ -33,7 +33,7 @@ except ImportError:
 @dataclass
 class SelfPlayDataPoint:
     """Data point from self-play games."""
-    board_features: np.ndarray  # (10, 17, 7) neural network features
+    board_features: np.ndarray  # (10, 17, 2) neural network features
     mcts_policy: np.ndarray     # MCTS visit count policy  
     valid_moves: List[Tuple[int, int, int, int]]  # Valid moves for this position
     game_result: float          # Final game result from this player's perspective
@@ -205,34 +205,31 @@ class SelfPlayGenerator:
                 break
             
             # Get current board features
-            board_features = game_board.to_neural_features()  # (10, 17, 7)
+            board_features = game_board.to_neural_features(current_player)  # (10, 17, 2)
             
             # Run MCTS to get move probabilities
-            try:
-                best_move, search_stats = mcts.search(
-                    initial_state=game_board,
-                    player=current_player,
-                    max_time=self.mcts_time
-                )
-                
-                # Get MCTS policy (visit counts normalized)
-                move_probs = search_stats.get('move_probabilities', {})
-                
-                # Convert to policy vector for valid moves
-                mcts_policy = np.zeros(len(valid_moves))
-                for i, move in enumerate(valid_moves):
-                    mcts_policy[i] = move_probs.get(move, 0.0)
-                
-                # Normalize to sum to 1
-                if mcts_policy.sum() > 0:
-                    mcts_policy = mcts_policy / mcts_policy.sum()
-                else:
-                    mcts_policy = np.ones(len(valid_moves)) / len(valid_moves)
-                
-            except Exception as e:
-                print(f"MCTS search failed: {e}")
-                # Fallback to uniform policy
-                best_move = random.choice(valid_moves)
+            best_move, search_stats = mcts.search(
+                initial_state=game_board,
+                player=current_player,
+                max_time=self.mcts_time
+            )
+            
+            # Get MCTS policy (visit counts normalized)
+            visit_counts = search_stats.get('visit_counts', {})
+            
+            # Convert to policy vector for valid moves
+            mcts_policy = np.zeros(len(valid_moves))
+            total_visits = 0
+            
+            for i, move in enumerate(valid_moves):
+                visits = visit_counts.get(move, 0)
+                mcts_policy[i] = visits
+                total_visits += visits
+            
+            # Normalize based on visit counts
+            if total_visits > 0:
+                mcts_policy = mcts_policy / total_visits
+            else:
                 mcts_policy = np.ones(len(valid_moves)) / len(valid_moves)
             
             # Store training data (result will be filled in later)

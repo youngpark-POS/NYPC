@@ -272,50 +272,35 @@ class GameBoard:
         
         return np.array(features, dtype=np.float32)
     
-    def to_neural_features(self) -> np.ndarray:
+    def to_neural_features(self, current_player: int) -> np.ndarray:
         """
-        Convert board state to multi-channel input for CNN.
+        Convert board state to multi-channel input for neural network.
+        
+        Args:
+            current_player: Player who is about to move (0 or 1)
         
         Returns:
-            7-channel spatial features (10x17x7):
-            - Channel 0: Normalized mushroom values (0-9 → 0.0-1.0)
-            - Channel 1: Available cell mask (1 if not occupied, 0 if occupied)
-            - Channel 2: Distance to nearest edge (normalized)
-            - Channel 3: Local density (3x3 neighborhood sum, normalized)
-            - Channel 4: Player 1 territory (1.0 if controlled, 0.0 otherwise)
-            - Channel 5: Player 2 territory (1.0 if controlled, 0.0 otherwise)
-            - Channel 6: Territory influence (distance-based influence map)
+            2-channel spatial features (10x17x2):
+            - Channel 0: Normalized mushroom values (0→0.0, 1-9→0.1-0.9)
+            - Channel 1: Territory difference (my_territory - opponent_territory)
+                        +1.0: My territory
+                        -1.0: Opponent territory  
+                         0.0: Neutral territory
         """
-        features = np.zeros((self.rows, self.cols, 7), dtype=np.float32)
+        features = np.zeros((self.rows, self.cols, 2), dtype=np.float32)
         
-        # Channel 0: Normalized mushroom values
-        features[:, :, 0] = self.board / 9.0  # 0-9 → 0.0-1.0
+        # Channel 0: Normalized mushroom values (0→0.0, 1-9→0.1-0.9)
+        features[:, :, 0] = np.where(self.board == 0, 0.0, 0.1 + (self.board - 1) * 0.8 / 8)
         
-        # Channel 1: Available cell mask
-        features[:, :, 1] = (self.board > 0).astype(np.float32)
-        
-        # Channel 2: Distance to nearest edge (normalized)
-        for r in range(self.rows):
-            for c in range(self.cols):
-                dist_to_edge = min(r, c, self.rows - 1 - r, self.cols - 1 - c)
-                features[r, c, 2] = dist_to_edge / max(self.rows, self.cols)
-        
-        # Channel 3: Local density (3x3 neighborhood sum)
-        for r in range(self.rows):
-            for c in range(self.cols):
-                r_start, r_end = max(0, r - 1), min(self.rows, r + 2)
-                c_start, c_end = max(0, c - 1), min(self.cols, c + 2)
-                local_sum = np.sum(self.board[r_start:r_end, c_start:c_end])
-                features[r, c, 3] = local_sum / 90.0  # Max possible: 10 * 9 = 90
-        
-        # Channel 4: Player 1 territory
-        features[:, :, 4] = (self.territory == 1).astype(np.float32)
-        
-        # Channel 5: Player 2 territory
-        features[:, :, 5] = (self.territory == -1).astype(np.float32)
-        
-        # Channel 6: Territory influence map
-        features[:, :, 6] = self._compute_influence_map()
+        # Channel 1: Territory difference from current player's perspective
+        # Player 0: territory==1 is mine, territory==-1 is opponent's
+        # Player 1: territory==-1 is mine, territory==1 is opponent's
+        if current_player == 0:
+            # Player 0's perspective: +1 for player 1 territory, -1 for player 2 territory
+            features[:, :, 1] = self.territory.astype(np.float32)
+        else:
+            # Player 1's perspective: +1 for myself (-1 territory), -1 for opponent (1 territory)
+            features[:, :, 1] = -self.territory.astype(np.float32)
         
         return features
     
