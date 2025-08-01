@@ -1,0 +1,263 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+from torch.utils.data import Dataset, DataLoader
+from typing import List, Tuple
+import os
+import time
+from neural_network import AlphaZeroNet, AlphaZeroTrainer
+from self_play import SelfPlayGenerator, SelfPlayData
+
+class AlphaZeroDataset(Dataset):
+    """알파제로 훈련 데이터셋"""
+    def __init__(self, states: np.ndarray, policy_targets: List[List[float]], 
+                 value_targets: np.ndarray, valid_moves_list: List[List[Tuple[int, int, int, int]]]):
+        self.states = torch.FloatTensor(states)
+        self.policy_targets = policy_targets
+        self.value_targets = torch.FloatTensor(value_targets)
+        self.valid_moves_list = valid_moves_list
+    
+    def __len__(self):
+        return len(self.states)
+    
+    def __getitem__(self, idx):
+        return (self.states[idx], self.policy_targets[idx], 
+                self.value_targets[idx], self.valid_moves_list[idx])
+
+class TrainingManager:
+    """알파제로 훈련 관리 클래스"""
+    
+    def __init__(self, model: AlphaZeroNet, save_dir: str = "practice/models"):
+        self.model = model
+        self.trainer = AlphaZeroTrainer(model)
+        self.save_dir = save_dir
+        self.training_history = {
+            'total_loss': [],
+            'policy_loss': [],
+            'value_loss': [],
+            'epochs': []
+        }
+        
+        # 저장 디렉토리 생성
+        os.makedirs(save_dir, exist_ok=True)
+    
+    def train_on_batch(self, states: torch.Tensor, policy_targets: List[List[float]], 
+                       value_targets: torch.Tensor, valid_moves_list: List[List[Tuple[int, int, int, int]]]) -> dict:
+        """배치 단위 훈련"""
+        states_np = states.numpy()
+        value_targets_np = value_targets.numpy()
+        
+        loss_info = self.trainer.train_step(states_np, policy_targets, value_targets_np, valid_moves_list)
+        return loss_info
+    
+    def train_epoch(self, dataloader: DataLoader, verbose: bool = True) -> dict:
+        """한 에포크 훈련"""
+        total_losses = []
+        policy_losses = []
+        value_losses = []
+        
+        self.model.train()
+        
+        for batch_idx, (states, policy_targets, value_targets, valid_moves_list) in enumerate(dataloader):
+            loss_info = self.train_on_batch(states, policy_targets, value_targets, valid_moves_list)
+            
+            total_losses.append(loss_info['total_loss'])
+            policy_losses.append(loss_info['policy_loss'])
+            value_losses.append(loss_info['value_loss'])
+            
+            if verbose and batch_idx % 10 == 0:
+                print(f"Batch {batch_idx}/{len(dataloader)}: "
+                      f"Total Loss: {loss_info['total_loss']:.4f}, "
+                      f"Policy Loss: {loss_info['policy_loss']:.4f}, "
+                      f"Value Loss: {loss_info['value_loss']:.4f}")
+        
+        epoch_stats = {
+            'total_loss': np.mean(total_losses),
+            'policy_loss': np.mean(policy_losses),
+            'value_loss': np.mean(value_losses)
+        }
+        
+        return epoch_stats
+    
+    def train_from_self_play_data(self, game_data_list: List[SelfPlayData], 
+                                 epochs: int = 10, batch_size: int = 32, verbose: bool = True) -> dict:
+        """셀프플레이 데이터로 훈련"""
+        # 데이터 수집
+        from self_play import SelfPlayGenerator
+        generator = SelfPlayGenerator(self.model)
+        states, policy_targets, value_targets, valid_moves_list = generator.collect_training_data(game_data_list)
+        
+        if len(states) == 0:
+            print("No training data available!")
+            return {'total_loss': 0, 'policy_loss': 0, 'value_loss': 0}
+        
+        print(f"Training on {len(states)} samples for {epochs} epochs")
+        
+        # 데이터셋 생성
+        dataset = AlphaZeroDataset(states, policy_targets, value_targets, valid_moves_list)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        
+        # 훈련 실행
+        epoch_stats = {'total_loss': 0, 'policy_loss': 0, 'value_loss': 0}
+        
+        for epoch in range(epochs):
+            start_time = time.time()
+            epoch_stats = self.train_epoch(dataloader, verbose=(verbose and epoch % 5 == 0))
+            
+            # 훈련 기록 저장
+            self.training_history['total_loss'].append(epoch_stats['total_loss'])
+            self.training_history['policy_loss'].append(epoch_stats['policy_loss'])
+            self.training_history['value_loss'].append(epoch_stats['value_loss'])
+            self.training_history['epochs'].append(len(self.training_history['epochs']))
+            
+            if verbose:
+                elapsed = time.time() - start_time
+                print(f"Epoch {epoch+1}/{epochs} ({elapsed:.1f}s): "
+                      f"Total Loss: {epoch_stats['total_loss']:.4f}, "
+                      f"Policy Loss: {epoch_stats['policy_loss']:.4f}, "
+                      f"Value Loss: {epoch_stats['value_loss']:.4f}")
+        
+        return epoch_stats
+    
+    def save_model(self, filename: str = "latest_model.pth"):
+        """모델 저장"""
+        filepath = os.path.join(self.save_dir, filename)
+        self.trainer.save_checkpoint(filepath)
+        print(f"Model saved to {filepath}")
+    
+    def load_model(self, filename: str = "latest_model.pth"):
+        """모델 로드"""
+        filepath = os.path.join(self.save_dir, filename)
+        if os.path.exists(filepath):
+            self.trainer.load_checkpoint(filepath)
+            print(f"Model loaded from {filepath}")
+            return True
+        else:
+            print(f"Model file not found: {filepath}")
+            return False
+    
+    def save_model_as_binary(self, filename: str = "data.bin"):
+        """바이너리 형태로 모델 저장 (대회 제출용)"""
+        import pickle
+        filepath = os.path.join(self.save_dir, filename)
+        model_data = self.model.state_dict()
+        
+        with open(filepath, 'wb') as f:
+            pickle.dump(model_data, f)
+        
+        print(f"Binary model saved to {filepath}")
+    
+    def evaluate_model(self, test_data: List[SelfPlayData]) -> dict:
+        """모델 성능 평가"""
+        self.model.eval()
+        
+        from self_play import SelfPlayGenerator
+        generator = SelfPlayGenerator(self.model)
+        states, policy_targets, value_targets, valid_moves_list = generator.collect_training_data(test_data)
+        
+        if len(states) == 0:
+            return {'accuracy': 0.0, 'value_mae': 0.0}
+        
+        total_samples = len(states)
+        correct_predictions = 0
+        value_errors = []
+        
+        with torch.no_grad():
+            for i in range(total_samples):
+                state = states[i]
+                valid_moves = valid_moves_list[i]
+                true_value = value_targets[i]
+                
+                # 예측
+                _, predicted_value = self.model.predict(state, valid_moves)
+                
+                # 가치 예측 오차
+                value_errors.append(abs(predicted_value - true_value))
+                
+                # 정책 정확도 (가장 높은 확률의 액션이 맞는지)
+                policy_probs, _ = self.model.predict(state, valid_moves)
+                if policy_probs:
+                    predicted_action_idx = np.argmax(policy_probs)
+                    true_policy = policy_targets[i]
+                    if true_policy:
+                        true_action_idx = np.argmax(true_policy)
+                        if predicted_action_idx == true_action_idx:
+                            correct_predictions += 1
+        
+        accuracy = correct_predictions / total_samples if total_samples > 0 else 0.0
+        value_mae = np.mean(value_errors) if value_errors else 0.0
+        
+        return {
+            'accuracy': accuracy,
+            'value_mae': value_mae,
+            'samples': total_samples
+        }
+    
+    def get_training_stats(self) -> dict:
+        """훈련 통계 반환"""
+        if not self.training_history['total_loss']:
+            return {}
+        
+        return {
+            'latest_total_loss': self.training_history['total_loss'][-1],
+            'latest_policy_loss': self.training_history['policy_loss'][-1],
+            'latest_value_loss': self.training_history['value_loss'][-1],
+            'total_epochs': len(self.training_history['epochs']),
+            'avg_total_loss': np.mean(self.training_history['total_loss']),
+            'min_total_loss': np.min(self.training_history['total_loss'])
+        }
+
+class LearningRateScheduler:
+    """학습률 스케줄러"""
+    
+    def __init__(self, optimizer: torch.optim.Optimizer, initial_lr: float = 0.001):
+        self.optimizer = optimizer
+        self.initial_lr = initial_lr
+        self.current_lr = initial_lr
+    
+    def step(self, iteration: int):
+        """반복 횟수에 따라 학습률 조정"""
+        if iteration < 100:
+            lr = self.initial_lr
+        elif iteration < 300:
+            lr = self.initial_lr * 0.1
+        else:
+            lr = self.initial_lr * 0.01
+        
+        if lr != self.current_lr:
+            self.current_lr = lr
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = lr
+            print(f"Learning rate updated to {lr}")
+    
+    def decay(self, factor: float = 0.9):
+        """학습률 감소"""
+        self.current_lr *= factor
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = self.current_lr
+        print(f"Learning rate decayed to {self.current_lr}")
+
+class EarlyStopping:
+    """조기 종료 클래스"""
+    
+    def __init__(self, patience: int = 10, min_delta: float = 1e-4):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.best_loss = float('inf')
+        self.wait = 0
+        self.stopped = False
+    
+    def __call__(self, loss: float) -> bool:
+        """손실이 개선되지 않으면 True 반환"""
+        if loss < self.best_loss - self.min_delta:
+            self.best_loss = loss
+            self.wait = 0
+        else:
+            self.wait += 1
+            
+        if self.wait >= self.patience:
+            self.stopped = True
+            return True
+        
+        return False
