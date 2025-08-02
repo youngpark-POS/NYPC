@@ -1,49 +1,54 @@
 import math
+import time
+import random
 import numpy as np
 from typing import Dict, List, Tuple, Optional
-import copy
 from game_board import GameBoard
-from neural_network import AlphaZeroNet
 
 class MCTSNode:
-    def __init__(self, game_board: GameBoard, player: int, parent: Optional['MCTSNode'] = None, 
-                 parent_action: Optional[Tuple[int, int, int, int]] = None, prior_prob: float = 0.0):
-        self.game_board = game_board.copy()
-        self.player = player
+    """MCTS 트리의 노드"""
+    
+    def __init__(self, state: GameBoard, parent: 'MCTSNode' = None, 
+                 action: Tuple[int, int, int, int] = None, prior_prob: float = 0.0):
+        self.state = state
         self.parent = parent
-        self.parent_action = parent_action
-        self.prior_prob = prior_prob
+        self.action = action  # 부모에서 이 노드로 오는 액션
+        self.prior_prob = prior_prob  # 신경망이 예측한 사전 확률
         
-        # MCTS 통계
+        self.children: Dict[Tuple[int, int, int, int], 'MCTSNode'] = {}
         self.visit_count = 0
         self.value_sum = 0.0
-        self.children: Dict[Tuple[int, int, int, int], MCTSNode] = {}
         self.is_expanded = False
         
-    def is_leaf(self) -> bool:
-        """리프 노드인지 확인"""
-        return not self.is_expanded
-    
-    def get_value(self) -> float:
-        """노드의 평균 가치 반환"""
-        if self.visit_count == 0:
-            return 0.0
-        return self.value_sum / self.visit_count
+    def is_fully_expanded(self) -> bool:
+        """모든 가능한 액션이 확장되었는지 확인"""
+        if not self.is_expanded:
+            return False
+        valid_moves = self.state.get_valid_moves()
+        if not valid_moves:  # 유효한 움직임이 없으면 패스만 가능
+            return (-1, -1, -1, -1) in self.children
+        return len(self.children) >= len(valid_moves)
     
     def get_ucb_score(self, c_puct: float = 1.0) -> float:
-        """UCB1 점수 계산"""
+        """UCB 점수 계산"""
         if self.visit_count == 0:
             return float('inf')
         
-        exploitation = self.get_value()
-        exploration = c_puct * self.prior_prob * math.sqrt(self.parent.visit_count) / (1 + self.visit_count)
+        # Q-value (평균 가치)
+        q_value = self.value_sum / self.visit_count
         
-        return exploitation + exploration
+        # UCB 보너스
+        if self.parent is None:
+            return q_value
+        
+        exploration_bonus = c_puct * self.prior_prob * math.sqrt(self.parent.visit_count) / (1 + self.visit_count)
+        
+        return q_value + exploration_bonus
     
     def select_child(self, c_puct: float = 1.0) -> 'MCTSNode':
-        """UCB1 점수가 가장 높은 자식 노드 선택"""
+        """UCB 점수가 가장 높은 자식 노드 선택"""
+        best_score = -float('inf')
         best_child = None
-        best_score = float('-inf')
         
         for child in self.children.values():
             score = child.get_ucb_score(c_puct)
@@ -53,164 +58,232 @@ class MCTSNode:
         
         return best_child
     
-    def expand(self, model: AlphaZeroNet):
-        """노드 확장 (신경망으로 자식 노드들의 prior 확률 계산)"""
-        if self.is_expanded:
-            return
-        
-        # 게임 종료 체크
-        if self.game_board.is_game_over():
-            self.is_expanded = True
-            return
-        
-        # 유효한 움직임 가져오기
-        valid_moves = self.game_board.get_valid_moves()
-        if not valid_moves:
-            valid_moves = [(-1, -1, -1, -1)]  # 패스
-        
-        # 신경망으로 정책과 가치 예측
-        state = self.game_board.get_state_tensor(self.player)
-        move_probs, _ = model.get_move_probabilities(state, valid_moves, self.game_board)
-        
-        # 자식 노드 생성
-        for move in valid_moves:
-            if move in move_probs:
-                prior_prob = move_probs[move]
-                
-                # 새로운 게임 상태 생성
-                new_board = self.game_board.copy()
-                new_board.make_move(*move, self.player)
-                next_player = 1 - self.player
-                
-                # 자식 노드 생성
-                child_node = MCTSNode(new_board, next_player, self, move, prior_prob)
-                self.children[move] = child_node
-        
+    def expand(self, policy_probs: List[float], valid_moves: List[Tuple[int, int, int, int]]):
+        """노드 확장"""
         self.is_expanded = True
+        
+        # valid_moves에는 이미 패스가 포함되어 있어야 함
+        # 각 움직임에 대해 자식 노드 생성
+        for i, move in enumerate(valid_moves):
+            if i < len(policy_probs):
+                prior_prob = policy_probs[i]
+            else:
+                prior_prob = 1.0 / len(valid_moves)  # 균등 분포
+            
+            new_state = self.state.copy()
+            if new_state.make_move(*move, self.state.current_player):
+                self.children[move] = MCTSNode(new_state, self, move, prior_prob)
     
     def backup(self, value: float):
-        """값을 역전파"""
+        """백프로파게이션"""
         self.visit_count += 1
         self.value_sum += value
         
         if self.parent is not None:
-            # 상대방 관점에서 값 반전
+            # 상대방의 관점에서는 가치를 뒤집음
             self.parent.backup(-value)
     
-    def get_visit_distribution(self, temperature: float = 1.0) -> List[float]:
-        """방문 횟수 기반 확률 분포 반환"""
+    def get_action_probs(self, temperature: float = 1.0) -> Dict[Tuple[int, int, int, int], float]:
+        """방문 횟수 기반 액션 확률 분포 반환"""
         if not self.children:
-            return []
+            return {}
         
-        moves = list(self.children.keys())
-        visits = [child.visit_count for child in self.children.values()]
+        actions = list(self.children.keys())
+        visit_counts = [self.children[action].visit_count for action in actions]
         
         if temperature == 0:
-            # 최대 방문 횟수인 행동만 선택
-            max_visits = max(visits)
-            probs = [1.0 if v == max_visits else 0.0 for v in visits]
-            probs = [p / sum(probs) for p in probs]
+            # 탐욕적 선택: 최대 방문 횟수 액션만 1.0
+            best_action_idx = np.argmax(visit_counts)
+            probs = [0.0] * len(actions)
+            probs[best_action_idx] = 1.0
         else:
-            # Temperature 적용한 소프트맥스
-            visits = np.array(visits, dtype=np.float64)
-            visits_temp = visits ** (1.0 / temperature)
-            probs = visits_temp / np.sum(visits_temp)
-            probs = probs.tolist()
+            # 온도 조절된 확률 분포
+            if temperature == float('inf'):
+                # 균등 분포
+                probs = [1.0 / len(actions)] * len(actions)
+            else:
+                # 표준 AlphaZero 방식: visit_count^(1/T)
+                visit_counts = np.array(visit_counts, dtype=np.float64)
+                
+                # 방문 횟수 0 처리 (최소값 보장)
+                visit_counts = np.maximum(visit_counts, 1e-8)
+                
+                # 온도 적용
+                scaled_counts = visit_counts ** (1.0 / temperature)
+                
+                # 정규화
+                total = np.sum(scaled_counts)
+                if total > 0:
+                    probs = scaled_counts / total
+                else:
+                    # 안전장치: 균등 분포
+                    probs = np.ones(len(actions)) / len(actions)
+                
+                # 정규화 검증 및 보정
+                prob_sum = np.sum(probs)
+                if abs(prob_sum - 1.0) > 1e-6:
+                    probs = probs / prob_sum
+                
+                probs = probs.tolist()
         
-        return probs
+        return dict(zip(actions, probs))
 
 class MCTS:
-    def __init__(self, model: AlphaZeroNet, c_puct: float = 1.0, num_simulations: int = 800):
-        self.model = model
-        self.c_puct = c_puct
-        self.num_simulations = num_simulations
+    """Monte Carlo Tree Search 알고리즘"""
     
-    def search(self, game_board: GameBoard, player: int, temperature: float = 1.0) -> Tuple[Tuple[int, int, int, int], List[float], List[Tuple[int, int, int, int]]]:
-        """
-        MCTS 탐색 수행
-        Returns:
-            best_move: 선택된 최적 움직임
-            visit_probs: 방문 횟수 기반 확률 분포 
-            valid_moves: 유효한 움직임 리스트
-        """
-        root = MCTSNode(game_board, player)
+    def __init__(self, neural_network, num_simulations: int = 800, 
+                 c_puct: float = 1.0, time_limit: float = None):
+        self.neural_network = neural_network
+        self.num_simulations = num_simulations
+        self.c_puct = c_puct
+        self.time_limit = time_limit  # 시간 제한 (초)
         
-        # 시뮬레이션 수행
-        for _ in range(self.num_simulations):
-            node = root
-            path = [node]
+    def search(self, root_state: GameBoard, perspective_player: int) -> Tuple[MCTSNode, int]:
+        """MCTS 검색 실행"""
+        root = MCTSNode(root_state.copy())
+        start_time = time.time()
+        actual_simulations = 0
+        
+        for simulation in range(self.num_simulations):
+            # 시간 제한 체크
+            if self.time_limit and (time.time() - start_time) > self.time_limit:
+                break
             
-            # Selection: 리프 노드까지 내려가기
-            while not node.is_leaf() and not node.game_board.is_game_over():
-                node = node.select_child(self.c_puct)
-                path.append(node)
+            # 1. Selection: 리프 노드까지 내려가기
+            node = self._select(root)
             
-            # Expansion & Evaluation
-            if not node.game_board.is_game_over():
-                node.expand(self.model)
-                
-                # 자식이 있으면 하나 선택
-                if node.children:
-                    node = node.select_child(self.c_puct)
-                    path.append(node)
-            
-            # 현재 노드 평가
-            if node.game_board.is_game_over():
-                # 게임 종료시 실제 결과 사용
-                winner = node.game_board.get_winner()
-                if winner == player:
-                    value = 1.0
-                elif winner == 1 - player:
-                    value = -1.0
-                else:
-                    value = 0.0  # 무승부
+            # 2. Expansion and Evaluation
+            if node.state.is_terminal():
+                # 터미널 노드면 실제 게임 결과 사용
+                value = node.state.get_reward(perspective_player)
             else:
-                # 신경망으로 가치 평가
-                state = node.game_board.get_state_tensor(node.player)
-                valid_moves = node.game_board.get_valid_moves()
-                if not valid_moves:
-                    valid_moves = [(-1, -1, -1, -1)]
-                _, value = self.model.predict(state, valid_moves, node.game_board)
-                
-                # 현재 플레이어 관점으로 값 조정
-                if node.player != player:
-                    value = -value
+                # 신경망으로 평가하고 확장
+                value = self._expand_and_evaluate(node, perspective_player)
             
-            # Backup: 경로를 따라 값 역전파
-            for node in reversed(path):
-                node.backup(value)
-                value = -value  # 플레이어 전환시 값 반전
+            # 3. Backup: 결과를 루트까지 전파
+            node.backup(value)
+            actual_simulations += 1
         
-        # 최적 움직임 선택
+        return root, actual_simulations
+    
+    def _select(self, root: MCTSNode) -> MCTSNode:
+        """Selection 단계: UCB를 사용하여 리프까지 이동"""
+        current = root
+        
+        while current.is_fully_expanded() and not current.state.is_terminal():
+            current = current.select_child(self.c_puct)
+        
+        return current
+    
+    def _expand_and_evaluate(self, node: MCTSNode, perspective_player: int) -> float:
+        """Expansion과 Evaluation 단계"""
+        state = node.state
+        
+        # 신경망 평가
+        state_tensor = state.get_state_tensor(perspective_player)
+        valid_moves = state.get_valid_moves()
+        
+        try:
+            policy_probs, value = self.neural_network.predict(
+                state_tensor, valid_moves, state
+            )
+        except Exception as e:
+            # 신경망 오류 시 기본값 사용
+            print(f"Neural network error: {e}")
+            if valid_moves:
+                policy_probs = [1.0 / len(valid_moves)] * len(valid_moves)
+            else:
+                policy_probs = [1.0]
+            value = 0.0
+        
+        # 노드 확장
+        if not node.is_expanded:
+            node.expand(policy_probs, valid_moves)
+        
+        return value
+    
+    def get_best_move(self, state: GameBoard, perspective_player: int, 
+                     temperature: float = 1.0) -> Tuple[Tuple[int, int, int, int], int]:
+        """최적 움직임 반환"""
+        root, actual_simulations = self.search(state, perspective_player)
+        
         if not root.children:
-            return (-1, -1, -1, -1), [], [(-1, -1, -1, -1)]
+            # 자식이 없으면 패스
+            return (-1, -1, -1, -1), actual_simulations
         
-        valid_moves = list(root.children.keys())
-        visit_probs = root.get_visit_distribution(temperature)
+        action_probs = root.get_action_probs(temperature)
         
-        # 확률 분포에 따라 움직임 선택
-        if temperature == 0 or len(visit_probs) == 1:
+        if not action_probs:
+            return (-1, -1, -1, -1), actual_simulations
+        
+        if temperature == 0:
             # 탐욕적 선택
-            best_idx = np.argmax([child.visit_count for child in root.children.values()])
-            best_move = valid_moves[best_idx]
+            best_action = max(action_probs.keys(), key=lambda a: action_probs[a])
         else:
             # 확률적 선택
-            best_idx = np.random.choice(len(valid_moves), p=visit_probs)
-            best_move = valid_moves[best_idx]
+            actions = list(action_probs.keys())
+            probs = list(action_probs.values())
+            best_action = np.random.choice(len(actions), p=probs)
+            best_action = actions[best_action]
         
-        return best_move, visit_probs, valid_moves
+        return best_action, actual_simulations
     
-    def get_action_probabilities(self, game_board: GameBoard, player: int, temperature: float = 1.0) -> Dict[Tuple[int, int, int, int], float]:
-        """행동별 확률을 딕셔너리로 반환"""
-        _, visit_probs, valid_moves = self.search(game_board, player, temperature)
+    def get_action_probabilities(self, state: GameBoard, perspective_player: int, 
+                               temperature: float = 1.0) -> Tuple[Dict[Tuple[int, int, int, int], float], int]:
+        """액션 확률 분포 반환 (훈련 데이터용)"""
+        root, actual_simulations = self.search(state, perspective_player)
+        self._last_root = root  # 디버깅용 루트 노드 저장
+        return root.get_action_probs(temperature), actual_simulations
+    
+    def get_policy_vector(self, state: GameBoard, perspective_player: int, 
+                         temperature: float = 1.0) -> Tuple[np.ndarray, int]:
+        """전체 액션 공간에 대한 정책 벡터 반환"""
+        action_probs, actual_simulations = self.get_action_probabilities(state, perspective_player, temperature)
+        action_space_size = state.get_action_space_size()
         
-        action_probs = {}
-        for i, move in enumerate(valid_moves):
-            action_probs[move] = visit_probs[i] if i < len(visit_probs) else 0.0
+        policy_vector = np.zeros(action_space_size, dtype=np.float32)
         
-        return action_probs
+        for move, prob in action_probs.items():
+            action_idx = state.encode_move(*move)
+            if action_idx is not None:
+                policy_vector[action_idx] = prob
+        
+        # 정규화
+        if np.sum(policy_vector) > 0:
+            policy_vector = policy_vector / np.sum(policy_vector)
+        else:
+            # 모든 확률이 0이면 균등 분포
+            policy_vector.fill(1.0 / action_space_size)
+        
+        return policy_vector, actual_simulations
 
-    def get_best_move(self, game_board: GameBoard, player: int, temperature: float = 0.0) -> Tuple[int, int, int, int]:
-        """최적 움직임만 반환"""
-        best_move, _, _ = self.search(game_board, player, temperature)
-        return best_move
+class MCTSPlayer:
+    """MCTS를 사용하는 플레이어"""
+    
+    def __init__(self, neural_network, num_simulations: int = 800, 
+                 temperature: float = 1.0, c_puct: float = 1.0, time_limit: float = None):
+        self.mcts = MCTS(neural_network, num_simulations, c_puct, time_limit)
+        self.temperature = temperature
+        self.player_id = None
+    
+    def set_player_id(self, player_id: int):
+        """플레이어 ID 설정"""
+        self.player_id = player_id
+    
+    def get_move(self, state: GameBoard) -> Tuple[int, int, int, int]:
+        """움직임 결정"""
+        if self.player_id is None:
+            raise ValueError("Player ID not set")
+        
+        move, _ = self.mcts.get_best_move(state, self.player_id, self.temperature)
+        return move
+    
+    def get_training_data(self, state: GameBoard) -> Tuple[np.ndarray, np.ndarray]:
+        """훈련 데이터 생성 (상태, 정책)"""
+        if self.player_id is None:
+            raise ValueError("Player ID not set")
+        
+        state_tensor = state.get_state_tensor(self.player_id)
+        policy_vector, _ = self.mcts.get_policy_vector(state, self.player_id, self.temperature)
+        
+        return state_tensor, policy_vector

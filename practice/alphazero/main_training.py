@@ -16,7 +16,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from game_board import GameBoard
 from neural_network import AlphaZeroNet
-from self_play import SelfPlayGenerator
+from self_play import SelfPlayGenerator, debug_self_play
 from training import TrainingManager
 from mcts import MCTS
 
@@ -40,30 +40,37 @@ def main():
     parser.add_argument('--selfplay-games', type=int, default=20, help='Number of self-play games per iteration')
     parser.add_argument('--training-epochs', type=int, default=10, help='Training epochs per iteration')
     parser.add_argument('--simulations', type=int, default=400, help='MCTS simulations per move')
+    parser.add_argument('--time-limit', type=float, default=1.0, help='MCTS time limit in seconds')
     parser.add_argument('--batch-size', type=int, default=32, help='Training batch size')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--save-dir', type=str, default='practice/models', help='Model save directory')
+    parser.add_argument('--project-name', type=str, default='mushroom_game', help='Project name for model directory')
     parser.add_argument('--input-file', type=str, default='practice/testing/input.txt', help='Game board input file')
     parser.add_argument('--resume', type=str, default=None, help='Resume from checkpoint')
     parser.add_argument('--verbose', action='store_true', help='Verbose output')
     
     args = parser.parse_args()
     
+    # 프로젝트별 디렉토리 생성
+    project_save_dir = os.path.join(args.save_dir, args.project_name)
+    
     print("=" * 60)
     print("AlphaZero Training Started")
     print("=" * 60)
     print(f"Configurations:")
+    print(f"  Project: {args.project_name}")
     print(f"  Iterations: {args.iterations}")
     print(f"  Self-play games per iteration: {args.selfplay_games}")
     print(f"  Training epochs per iteration: {args.training_epochs}")
     print(f"  MCTS simulations: {args.simulations}")
+    print(f"  MCTS time limit: {args.time_limit}s")
     print(f"  Batch size: {args.batch_size}")
     print(f"  Learning rate: {args.lr}")
-    print(f"  Save directory: {args.save_dir}")
+    print(f"  Save directory: {project_save_dir}")
     print("=" * 60)
     
     # 디렉토리 생성
-    os.makedirs(args.save_dir, exist_ok=True)
+    os.makedirs(project_save_dir, exist_ok=True)
     
     # 초기 보드 로드
     initial_board = load_initial_board(args.input_file)
@@ -80,7 +87,7 @@ def main():
     print(f"Action space size: {action_space_size}")
     
     # 훈련 관리자 생성
-    trainer = TrainingManager(model, args.save_dir)
+    trainer = TrainingManager(model, project_save_dir)
     
     # 체크포인트에서 재시작
     start_iteration = 0
@@ -108,6 +115,8 @@ def main():
             num_simulations=args.simulations,
             temperature=1.0 if iteration < args.iterations // 2 else 0.1  # 후반부에는 temperature 낮춤
         )
+        # MCTS에 시간 제한 설정
+        selfplay_generator.mcts.time_limit = args.time_limit
         
         game_data_list = selfplay_generator.generate_games(
             initial_board, 
@@ -173,8 +182,32 @@ def main():
         print(f"Final value loss: {stats['latest_value_loss']:.4f}")
         print(f"Best total loss: {stats['min_total_loss']:.4f}")
     
-    print(f"Models saved in: {args.save_dir}")
+    print(f"Models saved in: {project_save_dir}")
     print("Training completed successfully!")
+
+def debug_zero_score():
+    """0-0 무승부 디버깅 함수"""
+    print("0-0 무승부 원인 규명 시작...")
+    
+    # 기본 보드 로드
+    initial_board = load_initial_board("practice/testing/input.txt")
+    
+    # 모델 생성
+    temp_board = [[1] * 17 for _ in range(10)]
+    temp_game = GameBoard(temp_board)
+    action_space_size = temp_game.get_action_space_size()
+    model = AlphaZeroNet(hidden_channels=128, action_space_size=action_space_size)
+    
+    print(f"Model created with {sum(p.numel() for p in model.parameters())} parameters")
+    print(f"Action space size: {action_space_size}")
+    
+    # 디버깅 자기대국 실행
+    is_zero_score = debug_self_play(model, initial_board)
+    
+    if is_zero_score:
+        print("\n!!! 0-0 무승부 발생 확인 !!!")
+    else:
+        print("\n정상적인 게임 종료")
 
 def quick_test():
     """빠른 테스트 함수"""
@@ -221,14 +254,16 @@ def quick_test():
     
     # MCTS 테스트
     print("Testing MCTS...")
-    mcts = MCTS(model, num_simulations=50)  # 적은 시뮬레이션으로 테스트
-    best_move = mcts.get_best_move(game_board, 1, temperature=0.0)
-    print(f"MCTS best move: {best_move}")
+    mcts = MCTS(model, num_simulations=50, time_limit=1.0)  # 테스트용 시간 제한
+    best_move, simulations = mcts.get_best_move(game_board, 1, temperature=0.0)
+    print(f"MCTS best move: {best_move} (simulations: {simulations})")
     
     print("Quick test completed successfully!")
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--test":
         quick_test()
+    elif len(sys.argv) > 1 and sys.argv[1] == "--debug":
+        debug_zero_score()
     else:
         main()

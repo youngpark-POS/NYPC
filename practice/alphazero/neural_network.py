@@ -81,13 +81,13 @@ class AlphaZeroNet(nn.Module):
     
     def predict(self, state: np.ndarray, valid_moves: list, game_board=None) -> tuple:
         """
-        단일 상태에 대한 예측
+        단일 상태에 대한 예측 (인덱스 기반 마스킹)
         Args:
             state: (2, 10, 17) 형태의 numpy 배열
             valid_moves: 유효한 움직임 리스트 [(r1,c1,r2,c2), ...]
-            game_board: GameBoard 인스턴스 (액션 인코딩용)
+            game_board: GameBoard 인스턴스 (액션 매핑용)
         Returns:
-            policy_probs: 유효한 움직임에 대한 확률 분포
+            policy_probs: 유효한 움직임에 대한 확률 분포 (valid_moves 순서대로)
             value: 상태 가치 (-1 ~ 1)
         """
         self.eval()
@@ -95,53 +95,44 @@ class AlphaZeroNet(nn.Module):
             # 입력 텐서 변환
             state_tensor = torch.FloatTensor(state).unsqueeze(0)  # (1, 2, 10, 17)
             
-            # 신경망 예측
+            # 신경망 예측 (8246 전체 액션 공간)
             policy_logits, value = self.forward(state_tensor)
-            policy_logits = policy_logits.squeeze(0)  # (action_space_size,)
+            policy_logits = policy_logits.squeeze(0)  # (8246,)
             value = value.squeeze().item()
             
-            # 유효한 움직임에 대해서만 소프트맥스 적용
+            # 유효한 움직임이 없으면 패스만 가능
             if not valid_moves:
-                # 유효한 움직임이 없으면 패스만 가능
                 return [1.0], value
             
-            # GameBoard의 액션 매핑을 사용하여 인덱스 찾기
+            # 유효한 액션들을 8246 공간의 인덱스로 매핑
             valid_indices = []
-            valid_logits = []
-            
             for move in valid_moves:
                 if game_board is not None:
-                    # GameBoard의 인코딩 사용
-                    idx = game_board.encode_move(*move)
-                else:
-                    # 패스인 경우 마지막 인덱스
-                    if move[0] == -1:
-                        idx = self.action_space_size - 1
-                    else:
-                        # 캐시된 GameBoard 사용
-                        if not hasattr(self, '_cached_game_board'):
-                            from game_board import GameBoard
-                            temp_board = [[1] * self.board_width for _ in range(self.board_height)]
-                            self._cached_game_board = GameBoard(temp_board)
-                        idx = self._cached_game_board.encode_move(*move)
-                
-                if idx is not None and 0 <= idx < self.action_space_size:
-                    valid_indices.append(idx)
-                    valid_logits.append(policy_logits[idx].item())
+                    action_idx = game_board.encode_move(*move)
+                    if action_idx is not None:
+                        valid_indices.append(action_idx)
             
-            if not valid_logits:
-                # 유효한 인덱스가 없으면 균등 분포
+            if not valid_indices:
+                # 인덱스 매핑에 실패한 경우 균등 분포 반환
                 return [1.0 / len(valid_moves)] * len(valid_moves), value
             
+            # 유효한 인덱스에 해당하는 로짓만 추출
+            valid_logits = policy_logits[valid_indices]
+            
             # 소프트맥스 적용
-            valid_logits = torch.FloatTensor(valid_logits)
             policy_probs = F.softmax(valid_logits, dim=0).numpy().tolist()
+            
+            # valid_moves 순서에 맞추어 정렬
+            # 매핑된 인덱스와 valid_moves가 1:1 대응되도록 보장
+            if len(policy_probs) != len(valid_moves):
+                # 안전 장치: 길이가 다르면 균등 분포
+                policy_probs = [1.0 / len(valid_moves)] * len(valid_moves)
             
             return policy_probs, value
     
     def get_move_probabilities(self, state: np.ndarray, valid_moves: list, game_board=None) -> dict:
         """
-        움직임별 확률을 딕셔너리로 반환
+        움직임별 확률을 딕셔너리로 반환 (인덱스 기반 마스킹)
         """
         policy_probs, value = self.predict(state, valid_moves, game_board)
         
@@ -162,59 +153,34 @@ class AlphaZeroTrainer:
         self.value_loss_fn = nn.MSELoss()
         
     def train_step(self, states: np.ndarray, policy_targets: np.ndarray, 
-                   value_targets: np.ndarray, valid_moves_list: list) -> dict:
+                   value_targets: np.ndarray) -> dict:
         """
-        한 번의 훈련 스텝 수행
+        한 번의 훈련 스텝 수행 (8246 크기 고정 정책 타겟)
         Args:
             states: (batch_size, 2, 10, 17)
-            policy_targets: 각 상태의 유효한 움직임에 대한 MCTS 방문 분포
+            policy_targets: (batch_size, 8246) 8246 크기 고정 정책 타겟
             value_targets: (batch_size,) 게임 결과
-            valid_moves_list: 각 상태의 유효한 움직임 리스트
         """
         self.model.train()
         self.optimizer.zero_grad()
         
         # 텐서 변환
         states_tensor = torch.FloatTensor(states)
+        policy_targets_tensor = torch.FloatTensor(policy_targets)
         value_targets_tensor = torch.FloatTensor(value_targets).unsqueeze(1)
         
         # 신경망 예측
         policy_logits, value_pred = self.model(states_tensor)
         
-        # 정책 손실 계산 (유효한 움직임에 대해서만)
-        policy_losses = []
-        for i, (policy_target, valid_moves) in enumerate(zip(policy_targets, valid_moves_list)):
-            if len(valid_moves) == 0:
-                continue
-                
-            # 유효한 움직임의 로짓 추출 (전역 GameBoard 사용 또는 직접 계산)
-            valid_indices = []
-            if hasattr(self, '_cached_game_board'):
-                temp_game = self._cached_game_board
-            else:
-                from game_board import GameBoard
-                temp_board = [[1] * self.model.board_width for _ in range(self.model.board_height)]
-                temp_game = GameBoard(temp_board)
-                self._cached_game_board = temp_game
-            
-            for move in valid_moves:
-                idx = temp_game.encode_move(*move)
-                if idx is not None and 0 <= idx < self.model.action_space_size:
-                    valid_indices.append(idx)
-            
-            if not valid_indices:
-                continue
-                
-            valid_logits = policy_logits[i][valid_indices]
-            policy_target_tensor = torch.FloatTensor(policy_target[:len(valid_indices)])
-            
-            # 교차 엔트로피 손실
-            if len(policy_target_tensor) == len(valid_logits):
-                policy_loss = -torch.sum(policy_target_tensor * F.log_softmax(valid_logits, dim=0))
-                policy_losses.append(policy_loss)
+        # 정책 손실 계산 (KL Divergence - CrossEntropy 스타일)
+        # 이미 8246 크기로 정규화된 타겟이므로 직접 KL Divergence 적용
+        log_probs = F.log_softmax(policy_logits, dim=1)
+        policy_loss = -torch.sum(policy_targets_tensor * log_probs, dim=1)
         
-        if policy_losses:
-            total_policy_loss = torch.stack(policy_losses).mean()
+        # 유효한 타겟이 있는 샘플만 고려 (0이 아닌 확률이 있는 경우)
+        valid_samples = policy_targets_tensor.sum(dim=1) > 0
+        if valid_samples.sum() > 0:
+            total_policy_loss = policy_loss[valid_samples].mean()
         else:
             total_policy_loss = torch.tensor(0.0, requires_grad=True)
         
@@ -233,6 +199,7 @@ class AlphaZeroTrainer:
             'policy_loss': total_policy_loss.item(),
             'value_loss': value_loss.item()
         }
+    
     
     def save_checkpoint(self, filepath: str):
         """모델 체크포인트 저장"""

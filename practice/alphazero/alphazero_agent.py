@@ -66,22 +66,24 @@ class AlphaZeroAgent:
     def calculate_move(self, my_time: int, opp_time: int) -> tuple:
         """
         MCTS를 사용하여 최적의 움직임 계산
-        시간이 부족할 때는 시뮬레이션 수를 줄임
+        시간에 따른 MCTS 시간 제한 조정
         """
         if self.game_board is None:
             return (-1, -1, -1, -1)
         
-        # 시간에 따른 시뮬레이션 수 조정
+        # 시간에 따른 MCTS 시간 제한 조정
         if my_time < 1000:  # 1초 미만
-            simulations = 100
+            time_limit = 0.3  # 300ms
         elif my_time < 3000:  # 3초 미만  
-            simulations = 200
+            time_limit = 0.5  # 500ms
+        elif my_time < 5000:  # 5초 미만
+            time_limit = 0.8  # 800ms
         else:
-            simulations = self.mcts.num_simulations
+            time_limit = 1.0  # 1초
         
-        # 임시로 시뮬레이션 수 변경
-        original_sims = self.mcts.num_simulations
-        self.mcts.num_simulations = simulations
+        # 임시로 시간 제한 변경
+        original_time_limit = self.mcts.time_limit
+        self.mcts.time_limit = time_limit
         
         try:
             # MCTS로 최적 움직임 선택
@@ -96,8 +98,8 @@ class AlphaZeroAgent:
             else:
                 return (-1, -1, -1, -1)
         finally:
-            # 시뮬레이션 수 복원
-            self.mcts.num_simulations = original_sims
+            # 시간 제한 복원
+            self.mcts.time_limit = original_time_limit
     
     def update_opponent_move(self, r1: int, c1: int, r2: int, c2: int, time_used: int):
         """상대방의 움직임을 보드에 반영"""
