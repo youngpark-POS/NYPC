@@ -23,8 +23,6 @@ class GameBoard:
         self.move_to_action = {}
         self._build_action_mapping()
         
-        # 유효 움직임 캐시 (성능 최적화)
-        self._valid_moves_cache = {}
     
     def _build_action_mapping(self):
         """액션 인덱스와 움직임 간의 매핑 테이블 생성"""
@@ -51,9 +49,6 @@ class GameBoard:
         """액션 공간 크기 반환"""
         return len(self.action_to_move)
     
-    def _get_board_hash(self) -> tuple:
-        """보드 상태의 해시 키 생성 (캐싱용)"""
-        return tuple(tuple(row) for row in self.board)
     
     
     def encode_move(self, r1: int, c1: int, r2: int, c2: int) -> Optional[int]:
@@ -76,22 +71,14 @@ class GameBoard:
         new_board.action_to_move = self.action_to_move.copy()
         new_board.move_to_action = self.move_to_action.copy()
         
-        # 캐시 정보는 공유 (성능 최적화)
-        new_board._valid_moves_cache = self._valid_moves_cache
         
         return new_board
     
     def get_valid_moves(self) -> List[Tuple[int, int, int, int]]:
-        """현재 상태에서 유효한 움직임 반환 (캐싱 적용)"""
+        """현재 상태에서 유효한 움직임 반환 (조기 종료 최적화 적용)"""
         if self.game_over:
             return []
         
-        # 캐시 체크
-        board_hash = self._get_board_hash()
-        if board_hash in self._valid_moves_cache:
-            return self._valid_moves_cache[board_hash].copy()
-        
-        # 캐시 미스 - 실제 계산 수행 (조기 종료 최적화 적용)
         valid_moves = []
         
         for r1 in range(self.R):
@@ -118,9 +105,6 @@ class GameBoard:
                         # 세로 한 줄(c1==c2)에서 합>=10이면 더 큰 r2들도 건너뛰기
                         if c1 == c2 and total_sum >= 10:
                             skip_larger_r2 = True
-        
-        # 캐시에 저장
-        self._valid_moves_cache[board_hash] = valid_moves.copy()
         
         return valid_moves
     
