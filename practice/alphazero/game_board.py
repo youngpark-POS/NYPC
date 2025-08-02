@@ -22,6 +22,9 @@ class GameBoard:
         self.action_to_move = {}
         self.move_to_action = {}
         self._build_action_mapping()
+        
+        # 유효 움직임 캐시 (성능 최적화)
+        self._valid_moves_cache = {}
     
     def _build_action_mapping(self):
         """액션 인덱스와 움직임 간의 매핑 테이블 생성"""
@@ -48,6 +51,11 @@ class GameBoard:
         """액션 공간 크기 반환"""
         return len(self.action_to_move)
     
+    def _get_board_hash(self) -> tuple:
+        """보드 상태의 해시 키 생성 (캐싱용)"""
+        return tuple(tuple(row) for row in self.board)
+    
+    
     def encode_move(self, r1: int, c1: int, r2: int, c2: int) -> Optional[int]:
         """움직임을 액션 인덱스로 변환"""
         move = (r1, c1, r2, c2)
@@ -67,45 +75,66 @@ class GameBoard:
         new_board.winner = self.winner
         new_board.action_to_move = self.action_to_move.copy()
         new_board.move_to_action = self.move_to_action.copy()
+        
+        # 캐시 정보는 공유 (성능 최적화)
+        new_board._valid_moves_cache = self._valid_moves_cache
+        
         return new_board
     
     def get_valid_moves(self) -> List[Tuple[int, int, int, int]]:
-        """현재 상태에서 유효한 움직임 반환"""
+        """현재 상태에서 유효한 움직임 반환 (캐싱 적용)"""
         if self.game_over:
             return []
         
+        # 캐시 체크
+        board_hash = self._get_board_hash()
+        if board_hash in self._valid_moves_cache:
+            return self._valid_moves_cache[board_hash].copy()
+        
+        # 캐시 미스 - 실제 계산 수행 (조기 종료 최적화 적용)
         valid_moves = []
         
         for r1 in range(self.R):
             for c1 in range(self.C):
+                skip_larger_r2 = False
                 for r2 in range(r1, self.R):
+                    if skip_larger_r2:
+                        break
                     for c2 in range(c1, self.C):
-                        if self._is_valid_move(r1, c1, r2, c2):
-                            valid_moves.append((r1, c1, r2, c2))
+                        # 면적 체크
+                        area = (r2 - r1 + 1) * (c2 - c1 + 1)
+                        if area < 2:
+                            continue
+                        
+                        # 합계 계산
+                        total_sum = self._get_box_sum(r1, c1, r2, c2)
+                        
+                        if total_sum >= 10:
+                            if total_sum == 10 and self._check_edges(r1, c1, r2, c2):
+                                valid_moves.append((r1, c1, r2, c2))
+                            # 같은 r2에서 더 큰 c2들은 건너뛰기
+                            break
+                        
+                        # 세로 한 줄(c1==c2)에서 합>=10이면 더 큰 r2들도 건너뛰기
+                        if c1 == c2 and total_sum >= 10:
+                            skip_larger_r2 = True
+        
+        # 캐시에 저장
+        self._valid_moves_cache[board_hash] = valid_moves.copy()
         
         return valid_moves
     
-    def _is_valid_move(self, r1: int, c1: int, r2: int, c2: int) -> bool:
-        """움직임이 유효한지 검사"""
-        # 범위 체크
-        if not (0 <= r1 <= r2 < self.R and 0 <= c1 <= c2 < self.C):
-            return False
-        
-        area = (r2 - r1 + 1) * (c2 - c1 + 1)
-        if area < 2:  # 최소 2칸 이상
-            return False
-        
-        # 합이 10인지 확인 (양수만)
+    def _get_box_sum(self, r1: int, c1: int, r2: int, c2: int) -> int:
+        """박스 내부 점수 합계 계산 (양수만)"""
         total_sum = 0
         for i in range(r1, r2 + 1):
             for j in range(c1, c2 + 1):
                 if self.board[i][j] > 0:
                     total_sum += self.board[i][j]
-        
-        if total_sum != 10:
-            return False
-        
-        # 네 변에 각각 최소 하나 이상의 버섯이 있는지 확인
+        return total_sum
+    
+    def _check_edges(self, r1: int, c1: int, r2: int, c2: int) -> bool:
+        """네 변에 각각 최소 하나 이상의 버섯이 있는지 확인"""
         top, down, left, right = False, False, False, False
         
         # 상단과 하단 변
@@ -123,6 +152,24 @@ class GameBoard:
                 right = True
         
         return top and down and left and right
+    
+    def _is_valid_move(self, r1: int, c1: int, r2: int, c2: int) -> bool:
+        """움직임이 유효한지 검사"""
+        # 범위 체크
+        if not (0 <= r1 <= r2 < self.R and 0 <= c1 <= c2 < self.C):
+            return False
+        
+        area = (r2 - r1 + 1) * (c2 - c1 + 1)
+        if area < 2:  # 최소 2칸 이상
+            return False
+        
+        # 합이 10인지 확인
+        total_sum = self._get_box_sum(r1, c1, r2, c2)
+        if total_sum != 10:
+            return False
+        
+        # 네 변에 각각 최소 하나 이상의 버섯이 있는지 확인
+        return self._check_edges(r1, c1, r2, c2)
     
     def make_move(self, r1: int, c1: int, r2: int, c2: int, player: int) -> bool:
         """움직임 실행"""

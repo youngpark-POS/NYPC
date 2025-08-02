@@ -32,11 +32,12 @@ class SelfPlayGenerator:
     """자기대국 데이터 생성기"""
     
     def __init__(self, neural_network, num_simulations: int = 800, 
-                 temperature: float = 1.0, c_puct: float = 1.0):
+                 temperature: float = 1.0, c_puct: float = 1.0, engine_type: str = 'neural'):
         self.neural_network = neural_network
-        self.mcts = MCTS(neural_network, num_simulations, c_puct)
+        self.mcts = MCTS(neural_network, num_simulations, c_puct, time_limit=None, engine_type=engine_type)
         self.temperature = temperature
         self.num_simulations = num_simulations
+        self.engine_type = engine_type
         
     def play_game(self, initial_board: List[List[int]], verbose: bool = False) -> SelfPlayData:
         """한 게임 자기대국 실행"""
@@ -128,6 +129,7 @@ class SelfPlayGenerator:
             print(f"Total MCTS simulations: {total_simulations} (avg: {avg_simulations:.0f})")
             print(f"Final result: {final_result}")
             print(f"Final score: P0={final_score[0]}, P1={final_score[1]} ({winner_text})")
+            
         
         return SelfPlayData(
             game_states=game_states,
@@ -142,8 +144,7 @@ class SelfPlayGenerator:
         """여러 게임의 자기대국 데이터 생성"""
         games_data = []
         
-        board_type = "random boards" if use_random_boards else "fixed board"
-        print(f"Generating {num_games} self-play games with {board_type}...")
+        print(f"Generating {num_games} self-play games...")
         start_time = time.time()
         
         for game_idx in range(num_games):

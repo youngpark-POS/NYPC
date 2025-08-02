@@ -5,6 +5,29 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional
 from game_board import GameBoard
 
+def heuristic_evaluate_board(game_board: GameBoard, player: int) -> float:
+    """간단한 휴리스틱 보드 평가"""
+    if game_board.is_terminal():
+        winner = game_board.get_winner()
+        if winner == player:
+            return 1.0
+        elif winner == -1:
+            return 0.0
+        else:
+            return -1.0
+    
+    # 간단한 휴리스틱: 점수 차이 기반
+    scores = game_board.get_score()
+    my_score = scores[player]
+    opp_score = scores[1 - player]
+    
+    # 정규화된 점수 차이
+    total_score = my_score + opp_score + 1  # +1로 0 나누기 방지
+    score_diff = (my_score - opp_score) / total_score
+    
+    # -1 ~ 1 범위로 제한
+    return max(-1.0, min(1.0, score_diff))
+
 class MCTSNode:
     """MCTS 트리의 노드"""
     
@@ -132,11 +155,12 @@ class MCTS:
     """Monte Carlo Tree Search 알고리즘"""
     
     def __init__(self, neural_network, num_simulations: int = 800, 
-                 c_puct: float = 1.0, time_limit: float = None):
+                 c_puct: float = 1.0, time_limit: float = None, engine_type: str = 'neural'):
         self.neural_network = neural_network
         self.num_simulations = num_simulations
         self.c_puct = c_puct
         self.time_limit = time_limit  # 시간 제한 (초)
+        self.engine_type = engine_type  # 'neural' or 'heuristic'
         
     def search(self, root_state: GameBoard, perspective_player: int) -> Tuple[MCTSNode, int]:
         """MCTS 검색 실행"""
@@ -144,7 +168,12 @@ class MCTS:
         start_time = time.time()
         actual_simulations = 0
         
+        # 디버깅: 첫 번째 시뮬레이션 시간 측정
+        first_sim_time = None
+        
         for simulation in range(self.num_simulations):
+            sim_start = time.time()
+            
             # 시간 제한 체크
             if self.time_limit and (time.time() - start_time) > self.time_limit:
                 break
@@ -163,6 +192,18 @@ class MCTS:
             # 3. Backup: 결과를 루트까지 전파
             node.backup(value)
             actual_simulations += 1
+            
+            # 첫 번째 시뮬레이션 시간 기록
+            if first_sim_time is None:
+                first_sim_time = time.time() - sim_start
+        
+        total_time = time.time() - start_time
+        
+        # 성능 디버깅 정보 출력
+        if actual_simulations > 0:
+            avg_sim_time = total_time / actual_simulations
+            print(f"MCTS {self.engine_type}: {actual_simulations} sims in {total_time:.3f}s "
+                  f"(avg: {avg_sim_time*1000:.1f}ms/sim, first: {first_sim_time*1000:.1f}ms)")
         
         return root, actual_simulations
     
@@ -179,22 +220,61 @@ class MCTS:
         """Expansion과 Evaluation 단계"""
         state = node.state
         
-        # 신경망 평가
-        state_tensor = state.get_state_tensor(perspective_player)
-        valid_moves = state.get_valid_moves()
-        
-        try:
-            policy_probs, value = self.neural_network.predict(
-                state_tensor, valid_moves, state
-            )
-        except Exception as e:
-            # 신경망 오류 시 기본값 사용
-            print(f"Neural network error: {e}")
-            if valid_moves:
-                policy_probs = [1.0 / len(valid_moves)] * len(valid_moves)
+        if self.engine_type == 'heuristic':
+            # 휴리스틱 모드: 간단한 평가
+            value = heuristic_evaluate_board(state, perspective_player)
+            valid_moves = state.get_valid_moves()
+            
+            # 가장 큰 박스 또는 점수 이득이 큰 것 선택
+            if not valid_moves:
+                policy_probs = []
             else:
-                policy_probs = [1.0]
-            value = 0.0
+                move_scores = []
+                
+                for move in valid_moves:
+                    if move == (-1, -1, -1, -1):  # 패스
+                        move_scores.append(0.1)  # 낮은 점수
+                    else:
+                        r1, c1, r2, c2 = move
+                        # 박스 면적 계산
+                        area = (r2 - r1 + 1) * (c2 - c1 + 1)
+                        
+                        # 박스 내부 점수 합계 계산
+                        box_sum = 0
+                        for i in range(r1, r2 + 1):
+                            for j in range(c1, c2 + 1):
+                                if state.board[i][j] > 0:
+                                    box_sum += state.board[i][j]
+                        
+                        # 휴리스틱: 박스 면적 - 박스 내부 점수 합계
+                        heuristic_score = area - box_sum
+                        move_scores.append(heuristic_score)
+                
+                # 정규화 (소프트맥스 스타일)
+                if move_scores:
+                    # 수치 안정성을 위해 최대값 빼기
+                    max_score = max(move_scores)
+                    exp_scores = [np.exp(score - max_score) for score in move_scores]
+                    total = sum(exp_scores)
+                    policy_probs = [exp_score / total for exp_score in exp_scores]
+                else:
+                    policy_probs = [1.0 / len(valid_moves)] * len(valid_moves)
+        else:
+            # 신경망 평가 (느림)
+            valid_moves = state.get_valid_moves()
+            try:
+                state_tensor = state.get_state_tensor(perspective_player)
+                policy_probs, value = self.neural_network.predict(
+                    state_tensor, valid_moves, state
+                )
+            except Exception as e:
+                # 신경망 오류 시 기본값 사용
+                print(f"Neural network error: {e}")
+                if valid_moves:
+                    policy_probs = [1.0 / len(valid_moves)] * len(valid_moves)
+                else:
+                    policy_probs = [1.0]
+                value = 0.0
         
         # 노드 확장
         if not node.is_expanded:

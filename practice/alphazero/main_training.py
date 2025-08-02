@@ -50,9 +50,10 @@ def main():
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--save-dir', type=str, default='practice/models', help='Model save directory')
     parser.add_argument('--project-name', type=str, default='mushroom_game', help='Project name for model directory')
-    parser.add_argument('--input-file', type=str, default='practice/testing/input.txt', help='Game board input file')
     parser.add_argument('--resume', type=str, default=None, help='Resume from checkpoint')
     parser.add_argument('--verbose', action='store_true', help='Verbose output')
+    parser.add_argument('--mcts-engine', type=str, default='neural', choices=['neural', 'heuristic'], 
+                       help='MCTS engine type: neural (slow, accurate) or heuristic (fast, simple)')
     
     args = parser.parse_args()
     
@@ -73,14 +74,15 @@ def main():
     print(f"  Learning rate: {args.lr}")
     print(f"  Save directory: {project_save_dir}")
     print(f"  Random boards: Always enabled")
+    print(f"  MCTS engine: {args.mcts_engine}")
     print("=" * 60)
     
     # 디렉토리 생성
     os.makedirs(project_save_dir, exist_ok=True)
     
-    # 초기 보드 로드
-    initial_board = load_initial_board(args.input_file)
-    print(f"Loaded board with shape: {len(initial_board)}x{len(initial_board[0])}")
+    # 랜덤 보드만 사용하므로 기본 보드 생성 (실제로는 사용되지 않음)
+    initial_board = generate_random_board()
+    print(f"Using random boards for training (10x17)")
     
     # 모델 생성 (올바른 액션 공간 크기로)
     temp_board = [[1] * 17 for _ in range(10)]
@@ -103,16 +105,13 @@ def main():
     # 훈련 관리자 생성
     trainer = TrainingManager(model, project_save_dir)
     
-    # 체크포인트에서 재시작
+    # 체크포인트에서 재시작 (간단화)
     start_iteration = 0
     if args.resume:
         if trainer.load_model(args.resume):
-            # 파일명에서 iteration 번호 추출 시도
-            try:
-                start_iteration = int(args.resume.split('_')[-1].split('.')[0])
-                print(f"Resuming from iteration {start_iteration}")
-            except:
-                print("Could not determine starting iteration, starting from 0")
+            print(f"Resuming from saved model: {args.resume}")
+        else:
+            print(f"Could not load model: {args.resume}, starting fresh")
     
     # 훈련 루프
     all_training_data = []
@@ -121,13 +120,13 @@ def main():
         print(f"\n{'='*20} Iteration {iteration + 1}/{args.iterations} {'='*20}")
         
         # 1. 셀프플레이 데이터 생성
-        print(f"Generating {args.selfplay_games} self-play games...")
         start_time = time.time()
         
         selfplay_generator = SelfPlayGenerator(
             model, 
             num_simulations=args.simulations,
-            temperature=1.0 if iteration < args.iterations // 2 else 0.1  # 후반부에는 temperature 낮춤
+            temperature=1.0 if iteration < args.iterations // 2 else 0.1,  # 후반부에는 temperature 낮춤
+            engine_type=args.mcts_engine
         )
         # MCTS에 시간 제한 설정
         selfplay_generator.mcts.time_limit = args.time_limit
