@@ -65,12 +65,7 @@ class TrainingManager:
             policy_losses.append(loss_info['policy_loss'])
             value_losses.append(loss_info['value_loss'])
             
-            if verbose and batch_idx % 10 == 0:
-                gpu_info = f", GPU: {loss_info['gpu_memory_gb']:.2f}GB" if 'gpu_memory_gb' in loss_info and loss_info['gpu_memory_gb'] > 0 else ""
-                print(f"Batch {batch_idx}/{len(dataloader)}: "
-                      f"Total Loss: {loss_info['total_loss']:.4f}, "
-                      f"Policy Loss: {loss_info['policy_loss']:.4f}, "
-                      f"Value Loss: {loss_info['value_loss']:.4f}{gpu_info}")
+            
         
         epoch_stats = {
             'total_loss': np.mean(total_losses),
@@ -92,8 +87,8 @@ class TrainingManager:
             print("No training data available!")
             return {'total_loss': 0, 'policy_loss': 0, 'value_loss': 0}
         
-        print(f"Training on {len(states)} samples for {epochs} epochs")
-        print(f"Policy targets shape: {policy_targets.shape}")
+        if verbose:
+            print(f"Training on {len(states)} samples for {epochs} epochs")
         
         # 데이터셋 생성 (8246 크기 고정 policy_targets)
         dataset = AlphaZeroDataset(states, policy_targets, value_targets)
@@ -112,12 +107,9 @@ class TrainingManager:
             self.training_history['value_loss'].append(epoch_stats['value_loss'])
             self.training_history['epochs'].append(len(self.training_history['epochs']))
             
-            # 매 에포크마다 결과 출력
+            # 매 에포크 출력
             elapsed = time.time() - start_time
-            print(f"Epoch {epoch+1}/{epochs} ({elapsed:.1f}s): "
-                  f"Total Loss: {epoch_stats['total_loss']:.4f}, "
-                  f"Policy Loss: {epoch_stats['policy_loss']:.4f}, "
-                  f"Value Loss: {epoch_stats['value_loss']:.4f}")
+            print(f"Epoch {epoch+1}/{epochs}: Total {epoch_stats['total_loss']:.4f}, Policy {epoch_stats['policy_loss']:.4f}, Value {epoch_stats['value_loss']:.4f}")
         
         return epoch_stats
     
@@ -128,14 +120,29 @@ class TrainingManager:
         print(f"Model saved to {filepath}")
     
     def load_model(self, filename: str = "latest_model.pth"):
-        """모델 로드"""
+        """모델 로드 (기본 검증만)"""
         filepath = os.path.join(self.save_dir, filename)
-        if os.path.exists(filepath):
-            self.trainer.load_model(filepath)
-            print(f"Model loaded from {filepath}")
-            return True
-        else:
+        if not os.path.exists(filepath):
             print(f"Model file not found: {filepath}")
+            return False
+            
+        try:
+            # 모델 로드 및 검증
+            verification_info = self.trainer.load_model(filepath)
+            
+            print(f"Model loaded from {filepath}")
+            
+            # 중요한 에러만 출력
+            if not verification_info['parameters_match']:
+                print(f"  WARNING: Parameter mismatch - saved={verification_info['saved_parameters']}, current={verification_info['current_parameters']}")
+            
+            if not verification_info['optimizer_has_state']:
+                print("  WARNING: No optimizer state - training will start fresh")
+                
+            return True
+            
+        except Exception as e:
+            print(f"Error loading model: {e}")
             return False
     
     def save_model_as_binary(self, filename: str = "data.bin"):

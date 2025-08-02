@@ -5,10 +5,6 @@ import numpy as np
 
 # GPU/CPU 자동 감지
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f"PyTorch using device: {device}")
-if torch.cuda.is_available():
-    print(f"GPU: {torch.cuda.get_device_name()}")
-    print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
 
 class ResidualBlock(nn.Module):
     def __init__(self, channels: int):
@@ -227,15 +223,88 @@ class AlphaZeroTrainer:
     
     
     def save_model(self, filepath: str):
-        """모델 저장"""
-        torch.save({
+        """모델 저장 (가중치만)"""
+        checkpoint = {
             'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict()
-        }, filepath)
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'model_parameters': sum(p.numel() for p in self.model.parameters())
+        }
+        torch.save(checkpoint, filepath)
     
     def load_model(self, filepath: str):
-        """모델 로드"""
+        """모델 로드 (Optimizer 디바이스 이동 포함)"""
         checkpoint = torch.load(filepath, map_location='cpu')
+        
+        # 모델 상태 로드
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.model.to(self.device)  # 모델을 올바른 디바이스로 이동
+        self.model.to(self.device)
+        
+        # Optimizer 상태 로드
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        # 중요: Optimizer state를 GPU로 이동
+        if torch.cuda.is_available() and self.device.type == 'cuda':
+            for state in self.optimizer.state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.to(self.device)
+        
+        # 검증 정보 수집
+        current_params = sum(p.numel() for p in self.model.parameters())
+        saved_params = checkpoint.get('model_parameters', 0)
+        
+        # Optimizer state 검증
+        optimizer_step_count = 0
+        optimizer_has_state = False
+        for param_group in self.optimizer.param_groups:
+            for param in param_group['params']:
+                if param in self.optimizer.state:
+                    optimizer_has_state = True
+                    state = self.optimizer.state[param]
+                    if 'step' in state:
+                        optimizer_step_count = max(optimizer_step_count, state['step'])
+        
+        return {
+            'success': True,
+            'parameters_match': current_params == saved_params,
+            'current_parameters': current_params,
+            'saved_parameters': saved_params,
+            'optimizer_has_state': optimizer_has_state,
+            'optimizer_step_count': optimizer_step_count,
+            'current_lr': self.optimizer.param_groups[0]['lr']
+        }
+    
+    def verify_model_functionality(self):
+        """모델 기능 검증 (로드 후 확인용)"""
+        try:
+            # 테스트 입력 생성 (2, 10, 17)
+            test_input = torch.randn(1, 2, 10, 17).to(self.device)
+            
+            with torch.no_grad():
+                policy_logits, value = self.model(test_input)
+                
+            # 출력 형태 검증
+            expected_policy_size = 8246  # 액션 공간 크기
+            policy_ok = policy_logits.shape == (1, expected_policy_size)
+            value_ok = value.shape == (1, 1)
+            
+            # 출력 값 범위 검증
+            policy_probs = F.softmax(policy_logits, dim=1)
+            prob_sum_ok = abs(policy_probs.sum().item() - 1.0) < 1e-5
+            value_range_ok = -1.0 <= value.item() <= 1.0
+            
+            return {
+                'functional': True,
+                'policy_shape_ok': policy_ok,
+                'value_shape_ok': value_ok,
+                'probability_sum_ok': prob_sum_ok,
+                'value_range_ok': value_range_ok,
+                'all_checks_passed': policy_ok and value_ok and prob_sum_ok and value_range_ok
+            }
+            
+        except Exception as e:
+            return {
+                'functional': False,
+                'error': str(e),
+                'all_checks_passed': False
+            }

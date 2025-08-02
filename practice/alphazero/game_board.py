@@ -238,8 +238,8 @@ class GameBoard:
             for j in range(self.C):
                 cell = self.board[i][j]
                 if cell > 0:
-                    # 버섯 값을 정규화 (1-5 -> 0.2-1.0)
-                    state[0][i][j] = cell / 5.0
+                    # 버섯 값을 정규화 (1-9 -> 0.1-0.9)
+                    state[0][i][j] = cell / 10.0
                 elif cell == -(perspective_player + 1):
                     # 현재 플레이어가 점령한 칸
                     state[1][i][j] = 1.0

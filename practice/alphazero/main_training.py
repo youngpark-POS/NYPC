@@ -35,9 +35,9 @@ def load_initial_board(input_file: str = "practice/testing/input.txt"):
         return [[1, 2, 3, 4, 5] * 3 + [1, 2] for _ in range(10)]
 
 def generate_random_board(rows: int = 10, cols: int = 17) -> list[list[int]]:
-    """랜덤 게임 보드 생성 (1-5 범위)"""
+    """랜덤 게임 보드 생성 (1-9 범위)"""
     import random
-    return [[random.randint(1, 5) for _ in range(cols)] for _ in range(rows)]
+    return [[random.randint(1, 9) for _ in range(cols)] for _ in range(rows)]
 
 def main():
     parser = argparse.ArgumentParser(description='AlphaZero Training')
@@ -91,16 +91,12 @@ def main():
     action_space_size = temp_game.get_action_space_size()
     
     model = AlphaZeroNet(hidden_channels=128, action_space_size=action_space_size)
-    print(f"Model created with {sum(p.numel() for p in model.parameters())} parameters")
-    print(f"Action space size: {action_space_size}")
+    if args.verbose:
+        print(f"Model: {sum(p.numel() for p in model.parameters())} parameters, action space: {action_space_size}")
     
-    # GPU 정보 표시
-    if torch.cuda.is_available():
-        print(f"GPU Device: {torch.cuda.get_device_name()}")
-        print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
-        print(f"Model device: {model.device}")
-    else:
-        print("Using CPU (CUDA not available)")
+    # GPU/CPU 정보
+    device_info = f"GPU: {torch.cuda.get_device_name()}" if torch.cuda.is_available() else "CPU"
+    print(f"Device: {device_info}")
     
     # 훈련 관리자 생성
     trainer = TrainingManager(model, project_save_dir)
@@ -120,10 +116,10 @@ def main():
             print("No previous model found, starting fresh")
     
     # 훈련 루프
-    all_training_data = []
     
     for iteration in range(args.iterations):
         print(f"\n{'='*20} Iteration {iteration + 1}/{args.iterations} {'='*20}")
+        
         
         # 1. 셀프플레이 데이터 생성
         start_time = time.time()
@@ -148,17 +144,15 @@ def main():
         total_samples = sum(len(data) for data in game_data_list)
         print(f"Self-play completed in {selfplay_time:.1f}s, generated {total_samples} training samples")
         
-        # 데이터 누적 (최근 3번의 iteration 데이터만 유지)
-        all_training_data.extend(game_data_list)
-        if len(all_training_data) > args.selfplay_games * 3:
-            all_training_data = all_training_data[-args.selfplay_games * 3:]
+        # 표준 AlphaZero: 매 iteration마다 새로운 데이터만 사용
+        print(f"Training on fresh data: {len(game_data_list)} games")
         
         # 2. 신경망 훈련
         print(f"Training neural network for {args.training_epochs} epochs...")
         start_time = time.time()
         
         final_stats = trainer.train_from_self_play_data(
-            all_training_data,
+            game_data_list,
             epochs=args.training_epochs,
             batch_size=args.batch_size,
             verbose=args.verbose
@@ -170,9 +164,6 @@ def main():
               f"Policy: {final_stats['policy_loss']:.4f}, "
               f"Value: {final_stats['value_loss']:.4f}")
         
-        # GPU 메모리 사용량 표시
-        if 'gpu_memory_gb' in final_stats and final_stats['gpu_memory_gb'] > 0:
-            print(f"GPU Memory Usage: {final_stats['gpu_memory_gb']:.2f}GB")
         
         # 3. 최신 모델만 저장
         trainer.save_model("latest_model.pth")
