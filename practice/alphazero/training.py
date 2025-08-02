@@ -165,13 +165,13 @@ class TrainingManager:
         value_errors = []
         
         with torch.no_grad():
-            states_tensor = torch.FloatTensor(states)
-            value_targets_tensor = torch.FloatTensor(value_targets)
+            states_tensor = torch.FloatTensor(states).to(self.model.device)
+            value_targets_tensor = torch.FloatTensor(value_targets).to(self.model.device)
             
             _, predicted_values = self.model(states_tensor)
             predicted_values = predicted_values.squeeze()
             
-            value_errors = torch.abs(predicted_values - value_targets_tensor).numpy()
+            value_errors = torch.abs(predicted_values - value_targets_tensor).cpu().numpy()
             correct_predictions = total_samples // 2  # 임시값
         
         accuracy = correct_predictions / total_samples if total_samples > 0 else 0.0
