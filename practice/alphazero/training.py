@@ -112,12 +112,12 @@ class TrainingManager:
             self.training_history['value_loss'].append(epoch_stats['value_loss'])
             self.training_history['epochs'].append(len(self.training_history['epochs']))
             
-            if verbose:
-                elapsed = time.time() - start_time
-                print(f"Epoch {epoch+1}/{epochs} ({elapsed:.1f}s): "
-                      f"Total Loss: {epoch_stats['total_loss']:.4f}, "
-                      f"Policy Loss: {epoch_stats['policy_loss']:.4f}, "
-                      f"Value Loss: {epoch_stats['value_loss']:.4f}")
+            # 매 에포크마다 결과 출력
+            elapsed = time.time() - start_time
+            print(f"Epoch {epoch+1}/{epochs} ({elapsed:.1f}s): "
+                  f"Total Loss: {epoch_stats['total_loss']:.4f}, "
+                  f"Policy Loss: {epoch_stats['policy_loss']:.4f}, "
+                  f"Value Loss: {epoch_stats['value_loss']:.4f}")
         
         return epoch_stats
     

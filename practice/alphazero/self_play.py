@@ -138,18 +138,26 @@ class SelfPlayGenerator:
         )
     
     def generate_games(self, initial_board: List[List[int]], num_games: int, 
-                      verbose: bool = False) -> List[SelfPlayData]:
+                      verbose: bool = False, use_random_boards: bool = False) -> List[SelfPlayData]:
         """여러 게임의 자기대국 데이터 생성"""
         games_data = []
         
-        print(f"Generating {num_games} self-play games...")
+        board_type = "random boards" if use_random_boards else "fixed board"
+        print(f"Generating {num_games} self-play games with {board_type}...")
         start_time = time.time()
         
         for game_idx in range(num_games):
             show_progress = verbose or (game_idx + 1) % max(1, num_games // 10) == 0
             
             try:
-                game_data = self.play_game(initial_board, verbose=verbose and game_idx < 2)
+                # 랜덤 보드 사용 여부에 따라 보드 선택
+                if use_random_boards:
+                    import random
+                    game_board = [[random.randint(1, 5) for _ in range(17)] for _ in range(10)]
+                else:
+                    game_board = initial_board
+                    
+                game_data = self.play_game(game_board, verbose=verbose and game_idx < 2)
                 if len(game_data.game_states) > 0:  # 유효한 게임만 추가
                     games_data.append(game_data)
                     

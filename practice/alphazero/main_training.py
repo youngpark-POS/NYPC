@@ -34,6 +34,11 @@ def load_initial_board(input_file: str = "practice/testing/input.txt"):
         # 기본 보드 생성
         return [[1, 2, 3, 4, 5] * 3 + [1, 2] for _ in range(10)]
 
+def generate_random_board(rows: int = 10, cols: int = 17) -> list[list[int]]:
+    """랜덤 게임 보드 생성 (1-5 범위)"""
+    import random
+    return [[random.randint(1, 5) for _ in range(cols)] for _ in range(rows)]
+
 def main():
     parser = argparse.ArgumentParser(description='AlphaZero Training')
     parser.add_argument('--iterations', type=int, default=5, help='Number of training iterations')
@@ -67,6 +72,7 @@ def main():
     print(f"  Batch size: {args.batch_size}")
     print(f"  Learning rate: {args.lr}")
     print(f"  Save directory: {project_save_dir}")
+    print(f"  Random boards: Always enabled")
     print("=" * 60)
     
     # 디렉토리 생성
@@ -129,7 +135,8 @@ def main():
         game_data_list = selfplay_generator.generate_games(
             initial_board, 
             args.selfplay_games, 
-            verbose=args.verbose
+            verbose=args.verbose,
+            use_random_boards=True
         )
         
         selfplay_time = time.time() - start_time
@@ -162,11 +169,7 @@ def main():
         if 'gpu_memory_gb' in final_stats and final_stats['gpu_memory_gb'] > 0:
             print(f"GPU Memory Usage: {final_stats['gpu_memory_gb']:.2f}GB")
         
-        # 3. 모델 저장
-        model_filename = f"iteration_{iteration + 1}.pth"
-        trainer.save_model(model_filename)
-        
-        # 최신 모델을 latest로 저장
+        # 3. 최신 모델만 저장
         trainer.save_model("latest_model.pth")
         
         # 4. 간단한 성능 평가
@@ -176,7 +179,7 @@ def main():
             print(f"Evaluation - Accuracy: {eval_stats['accuracy']:.3f}, "
                   f"Value MAE: {eval_stats['value_mae']:.3f}")
         
-        print(f"Iteration {iteration + 1} completed!")
+        print(f"Iteration {iteration + 1} completed! Model saved as latest_model.pth")
     
     # 최종 모델을 바이너리 형태로 저장 (대회 제출용)
     print("\nSaving final model as binary for submission...")
