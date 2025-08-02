@@ -199,11 +199,6 @@ class MCTS:
         
         total_time = time.time() - start_time
         
-        # 성능 디버깅 정보 출력
-        if actual_simulations > 0:
-            avg_sim_time = total_time / actual_simulations
-            print(f"MCTS {self.engine_type}: {actual_simulations} sims in {total_time:.3f}s "
-                  f"(avg: {avg_sim_time*1000:.1f}ms/sim, first: {first_sim_time*1000:.1f}ms)")
         
         return root, actual_simulations
     
@@ -269,7 +264,6 @@ class MCTS:
                 )
             except Exception as e:
                 # 신경망 오류 시 기본값 사용
-                print(f"Neural network error: {e}")
                 if valid_moves:
                     policy_probs = [1.0 / len(valid_moves)] * len(valid_moves)
                 else:

@@ -16,7 +16,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from game_board import GameBoard
 from neural_network import AlphaZeroNet
-from self_play import SelfPlayGenerator, debug_self_play
+from self_play import SelfPlayGenerator
 from training import TrainingManager
 from mcts import MCTS
 
@@ -199,85 +199,7 @@ def main():
     print(f"Models saved in: {project_save_dir}")
     print("Training completed successfully!")
 
-def debug_zero_score():
-    """0-0 무승부 디버깅 함수"""
-    print("0-0 무승부 원인 규명 시작...")
-    
-    # 기본 보드 로드
-    initial_board = load_initial_board("practice/testing/input.txt")
-    
-    # 모델 생성
-    temp_board = [[1] * 17 for _ in range(10)]
-    temp_game = GameBoard(temp_board)
-    action_space_size = temp_game.get_action_space_size()
-    model = AlphaZeroNet(hidden_channels=128, action_space_size=action_space_size)
-    
-    print(f"Model created with {sum(p.numel() for p in model.parameters())} parameters")
-    print(f"Action space size: {action_space_size}")
-    
-    # 디버깅 자기대국 실행
-    is_zero_score = debug_self_play(model, initial_board)
-    
-    if is_zero_score:
-        print("\n!!! 0-0 무승부 발생 확인 !!!")
-    else:
-        print("\n정상적인 게임 종료")
 
-def quick_test():
-    """빠른 테스트 함수"""
-    print("Running quick test...")
-    
-    # 작은 보드로 테스트
-    test_board = [
-        [1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2],
-        [2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3],
-        [3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4],
-        [4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5],
-        [5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1],
-        [1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2],
-        [2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3],
-        [3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4],
-        [4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5],
-        [5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1]
-    ]
-    
-    # 게임 보드 테스트
-    print("Testing GameBoard...")
-    game_board = GameBoard(test_board)
-    valid_moves = game_board.get_valid_moves()
-    print(f"Found {len(valid_moves)} valid moves")
-    
-    if valid_moves:
-        first_move = valid_moves[0]
-        print(f"Testing move: {first_move}")
-        game_board.make_move(*first_move, 0)
-        print("Move executed successfully")
-    
-    # 신경망 테스트
-    print("Testing Neural Network...")
-    action_space_size = game_board.get_action_space_size()
-    model = AlphaZeroNet(action_space_size=action_space_size)
-    state = game_board.get_state_tensor(0)
-    print(f"State tensor shape: {state.shape}")
-    print(f"Action space size: {action_space_size}")
-    
-    test_moves = valid_moves[:5] if len(valid_moves) >= 5 else valid_moves
-    policy_probs, value = model.predict(state, test_moves, game_board)
-    print(f"Policy probs: {policy_probs}")
-    print(f"Value: {value}")
-    
-    # MCTS 테스트
-    print("Testing MCTS...")
-    mcts = MCTS(model, num_simulations=50, time_limit=1.0)  # 테스트용 시간 제한
-    best_move, simulations = mcts.get_best_move(game_board, 1, temperature=0.0)
-    print(f"MCTS best move: {best_move} (simulations: {simulations})")
-    
-    print("Quick test completed successfully!")
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--test":
-        quick_test()
-    elif len(sys.argv) > 1 and sys.argv[1] == "--debug":
-        debug_zero_score()
-    else:
-        main()
+    main()
