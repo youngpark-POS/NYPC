@@ -256,6 +256,53 @@ class MCTS:
             policy_vector.fill(1.0 / action_space_size)
         
         return policy_vector, actual_simulations
+    
+    def get_move_and_probs(self, state: GameBoard, perspective_player: int, 
+                          temperature: float = 1.0) -> Tuple[Tuple[int, int, int, int], Dict, np.ndarray, int]:
+        """
+        최적화된 메서드: 한 번의 MCTS 검색으로 모든 정보 반환
+        Returns:
+            best_move: 선택된 움직임
+            action_probs: 액션 확률 분포
+            policy_vector: 8246차원 정책 벡터
+            actual_simulations: 실제 시뮬레이션 횟수
+        """
+        # 한 번만 검색 실행
+        root, actual_simulations = self.search(state, perspective_player)
+        self._last_root = root  # 디버깅용
+        
+        # 1. 액션 확률 분포 계산
+        action_probs = root.get_action_probs(temperature)
+        
+        # 2. 최적 움직임 선택
+        if not action_probs:
+            best_move = (-1, -1, -1, -1)
+        elif temperature == 0:
+            # 탐욕적 선택
+            best_move = max(action_probs.keys(), key=lambda a: action_probs[a])
+        else:
+            # 확률적 선택
+            actions = list(action_probs.keys())
+            probs = list(action_probs.values())
+            best_action_idx = np.random.choice(len(actions), p=probs)
+            best_move = actions[best_action_idx]
+        
+        # 3. 정책 벡터 생성
+        action_space_size = state.get_action_space_size()
+        policy_vector = np.zeros(action_space_size, dtype=np.float32)
+        
+        for move, prob in action_probs.items():
+            action_idx = state.encode_move(*move)
+            if action_idx is not None:
+                policy_vector[action_idx] = prob
+        
+        # 정규화
+        if np.sum(policy_vector) > 0:
+            policy_vector = policy_vector / np.sum(policy_vector)
+        else:
+            policy_vector.fill(1.0 / action_space_size)
+        
+        return best_move, action_probs, policy_vector, actual_simulations
 
 class MCTSPlayer:
     """MCTS를 사용하는 플레이어"""

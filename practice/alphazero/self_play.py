@@ -59,9 +59,9 @@ class SelfPlayGenerator:
             if (-1, -1, -1, -1) not in valid_moves:
                 valid_moves.append((-1, -1, -1, -1))
             
-            # MCTS로 정책 분포 계산
+            # 최적화된 MCTS 호출 (한 번에 모든 정보 획득)
             try:
-                policy_vector, actual_simulations = self.mcts.get_policy_vector(
+                best_move, action_probs, policy_vector, actual_simulations = self.mcts.get_move_and_probs(
                     game_board, current_player, self.temperature
                 )
                 total_simulations += actual_simulations
@@ -79,11 +79,6 @@ class SelfPlayGenerator:
                     valid_moves_count=len(valid_moves)
                 )
                 game_states.append(game_state)
-                
-                # 움직임 선택
-                best_move, _ = self.mcts.get_best_move(
-                    game_board, current_player, self.temperature
-                )
                 
                 
                 if verbose and move_count % 10 == 0:
@@ -382,28 +377,14 @@ def debug_self_play(neural_network, initial_board: List[List[int]]):
                 traceback.print_exc()
                 break
             
-            # 3단계: MCTS 정책 분포 계산
-            print("Step 3: MCTS policy calculation...")
-            policy_vector, actual_simulations = generator.mcts.get_policy_vector(
+            # 3단계: 최적화된 MCTS 호출 (한 번에 모든 정보 획득)
+            print("Step 3: Optimized MCTS calculation...")
+            best_move, action_probs, policy_vector, actual_simulations = generator.mcts.get_move_and_probs(
                 game_board, current_player, generator.temperature
             )
-            print("  Policy vector calculation successful!")
+            print("  All MCTS calculations completed in one pass!")
             
-            # 4단계: 움직임 선택
-            print("Step 4: Move selection...")
-            best_move, _ = generator.mcts.get_best_move(
-                game_board, current_player, generator.temperature
-            )
-            print("  Move selection successful!")
-            
-            # 5단계: MCTS 결정 과정 분석
-            print("Step 5: Action probabilities...")
-            action_probs, _ = generator.mcts.get_action_probabilities(
-                game_board, current_player, generator.temperature
-            )
-            print("  Action probabilities calculation successful!")
-            
-            print(f"MCTS simulations: {actual_simulations}")
+            print(f"MCTS simulations: {actual_simulations} (optimized: 1x instead of 3x)")
             print(f"Selected move: {best_move}")
             
             if best_move == (-1, -1, -1, -1):
@@ -431,8 +412,8 @@ def debug_self_play(neural_network, initial_board: List[List[int]]):
                 if abs(total_prob - 1.0) > 1e-6:
                     print(f"  WARNING: Probabilities don't sum to 1.0! (sum: {total_prob:.6f})")
             
-            # 6단계: 움직임 실행
-            print("Step 6: Executing move...")
+            # 4단계: 움직임 실행 (Step 4,5 생략으로 번호 변경)
+            print("Step 4: Executing move...")
             success = game_board.make_move(*best_move, current_player)
             if not success:
                 print(f"ERROR: Invalid move attempted: {best_move}")
