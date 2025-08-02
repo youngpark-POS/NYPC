@@ -3,6 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
+# GPU/CPU 자동 감지
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"PyTorch using device: {device}")
+if torch.cuda.is_available():
+    print(f"GPU: {torch.cuda.get_device_name()}")
+    print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
+
 class ResidualBlock(nn.Module):
     def __init__(self, channels: int):
         super(ResidualBlock, self).__init__()
@@ -23,6 +30,7 @@ class AlphaZeroNet(nn.Module):
                  board_height: int = 10, board_width: int = 17, action_space_size: int = None):
         super(AlphaZeroNet, self).__init__()
         
+        self.device = device  # 글로벌 디바이스 사용
         self.board_height = board_height
         self.board_width = board_width
         
@@ -60,6 +68,9 @@ class AlphaZeroNet(nn.Module):
         self.value_fc1 = nn.Linear(board_height * board_width, hidden_channels)
         self.value_fc2 = nn.Linear(hidden_channels, 1)
         
+        # 모델을 GPU로 이전
+        self.to(self.device)
+        
     def forward(self, x):
         # 백본
         x = F.relu(self.input_bn(self.input_conv(x)))
@@ -92,13 +103,15 @@ class AlphaZeroNet(nn.Module):
         """
         self.eval()
         with torch.no_grad():
-            # 입력 텐서 변환
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)  # (1, 2, 10, 17)
+            # 입력 텐서 변환 및 GPU로 이전
+            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)  # (1, 2, 10, 17)
             
-            # 신경망 예측 (8246 전체 액션 공간)
+            # 신경망 예측 (8246 전체 액션 공간) - GPU에서 실행
             policy_logits, value = self.forward(state_tensor)
-            policy_logits = policy_logits.squeeze(0)  # (8246,)
-            value = value.squeeze().item()
+            
+            # CPU로 결과 이전
+            policy_logits = policy_logits.squeeze(0).cpu()  # (8246,)
+            value = value.squeeze().cpu().item()
             
             # 유효한 움직임이 없으면 패스만 가능
             if not valid_moves:
@@ -120,13 +133,17 @@ class AlphaZeroNet(nn.Module):
             valid_logits = policy_logits[valid_indices]
             
             # 소프트맥스 적용
-            policy_probs = F.softmax(valid_logits, dim=0).numpy().tolist()
+            policy_probs = F.softmax(valid_logits, dim=0).cpu().numpy().tolist()
             
             # valid_moves 순서에 맞추어 정렬
             # 매핑된 인덱스와 valid_moves가 1:1 대응되도록 보장
             if len(policy_probs) != len(valid_moves):
                 # 안전 장치: 길이가 다르면 균등 분포
                 policy_probs = [1.0 / len(valid_moves)] * len(valid_moves)
+            
+            # GPU 메모리 정리
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             
             return policy_probs, value
     
@@ -148,6 +165,7 @@ class AlphaZeroNet(nn.Module):
 class AlphaZeroTrainer:
     def __init__(self, model: AlphaZeroNet, lr: float = 0.001, weight_decay: float = 1e-4):
         self.model = model
+        self.device = model.device  # 모델과 같은 디바이스 사용
         self.optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
         self.policy_loss_fn = nn.CrossEntropyLoss()
         self.value_loss_fn = nn.MSELoss()
@@ -164,12 +182,12 @@ class AlphaZeroTrainer:
         self.model.train()
         self.optimizer.zero_grad()
         
-        # 텐서 변환
-        states_tensor = torch.FloatTensor(states)
-        policy_targets_tensor = torch.FloatTensor(policy_targets)
-        value_targets_tensor = torch.FloatTensor(value_targets).unsqueeze(1)
+        # 텐서 변환 및 GPU로 이전
+        states_tensor = torch.FloatTensor(states).to(self.device)
+        policy_targets_tensor = torch.FloatTensor(policy_targets).to(self.device)
+        value_targets_tensor = torch.FloatTensor(value_targets).unsqueeze(1).to(self.device)
         
-        # 신경망 예측
+        # 신경망 예측 (GPU에서 실행)
         policy_logits, value_pred = self.model(states_tensor)
         
         # 정책 손실 계산 (KL Divergence - CrossEntropy 스타일)
@@ -194,10 +212,17 @@ class AlphaZeroTrainer:
         total_loss.backward()
         self.optimizer.step()
         
+        # GPU 메모리 사용량 체크 (훈련 후)
+        gpu_memory_used = 0
+        if torch.cuda.is_available():
+            gpu_memory_used = torch.cuda.memory_allocated() / 1e9  # GB 단위
+            torch.cuda.empty_cache()  # 메모리 정리
+        
         return {
             'total_loss': total_loss.item(),
             'policy_loss': total_policy_loss.item(),
-            'value_loss': value_loss.item()
+            'value_loss': value_loss.item(),
+            'gpu_memory_gb': gpu_memory_used
         }
     
     

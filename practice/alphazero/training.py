@@ -66,10 +66,11 @@ class TrainingManager:
             value_losses.append(loss_info['value_loss'])
             
             if verbose and batch_idx % 10 == 0:
+                gpu_info = f", GPU: {loss_info['gpu_memory_gb']:.2f}GB" if 'gpu_memory_gb' in loss_info and loss_info['gpu_memory_gb'] > 0 else ""
                 print(f"Batch {batch_idx}/{len(dataloader)}: "
                       f"Total Loss: {loss_info['total_loss']:.4f}, "
                       f"Policy Loss: {loss_info['policy_loss']:.4f}, "
-                      f"Value Loss: {loss_info['value_loss']:.4f}")
+                      f"Value Loss: {loss_info['value_loss']:.4f}{gpu_info}")
         
         epoch_stats = {
             'total_loss': np.mean(total_losses),

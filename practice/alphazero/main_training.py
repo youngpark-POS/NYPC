@@ -86,6 +86,14 @@ def main():
     print(f"Model created with {sum(p.numel() for p in model.parameters())} parameters")
     print(f"Action space size: {action_space_size}")
     
+    # GPU 정보 표시
+    if torch.cuda.is_available():
+        print(f"GPU Device: {torch.cuda.get_device_name()}")
+        print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
+        print(f"Model device: {model.device}")
+    else:
+        print("Using CPU (CUDA not available)")
+    
     # 훈련 관리자 생성
     trainer = TrainingManager(model, project_save_dir)
     
@@ -149,6 +157,10 @@ def main():
         print(f"Final losses - Total: {final_stats['total_loss']:.4f}, "
               f"Policy: {final_stats['policy_loss']:.4f}, "
               f"Value: {final_stats['value_loss']:.4f}")
+        
+        # GPU 메모리 사용량 표시
+        if 'gpu_memory_gb' in final_stats and final_stats['gpu_memory_gb'] > 0:
+            print(f"GPU Memory Usage: {final_stats['gpu_memory_gb']:.2f}GB")
         
         # 3. 모델 저장
         model_filename = f"iteration_{iteration + 1}.pth"
