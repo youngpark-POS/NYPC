@@ -124,14 +124,14 @@ class TrainingManager:
     def save_model(self, filename: str = "latest_model.pth"):
         """모델 저장"""
         filepath = os.path.join(self.save_dir, filename)
-        self.trainer.save_checkpoint(filepath)
+        self.trainer.save_model(filepath)
         print(f"Model saved to {filepath}")
     
     def load_model(self, filename: str = "latest_model.pth"):
         """모델 로드"""
         filepath = os.path.join(self.save_dir, filename)
         if os.path.exists(filepath):
-            self.trainer.load_checkpoint(filepath)
+            self.trainer.load_model(filepath)
             print(f"Model loaded from {filepath}")
             return True
         else:

@@ -14,6 +14,7 @@ NYPC(New York Programming Contest) 버섯 게임을 위한 AlphaZero 기반 강�
 - **AlphaZero 알고리즘**: 신경망과 MCTS를 결합한 자가학습 시스템
 - **Expert Iteration**: 셀프플레이 → 신경망 학습 반복
 - **최적화된 액션 공간**: 8,246개의 유효한 액션
+- **고성능 최적화**: 조기 종료 알고리즘으로 5-6배 성능 향상
 
 ## 🏗️ 시스템 아키텍처
 
@@ -76,15 +77,10 @@ NYPC(New York Programming Contest) 버섯 게임을 위한 AlphaZero 기반 강�
 pip install torch numpy
 ```
 
-### 빠른 테스트
-```bash
-cd practice/alphazero
-python main_training.py --test
-```
-
 ### 훈련 시작
 ```bash
-# 기본 훈련
+# 기본 훈련 (자동으로 이전 모델 로드)
+cd practice/alphazero
 python main_training.py
 
 # 커스텀 설정
@@ -93,7 +89,17 @@ python main_training.py \
   --selfplay-games 50 \
   --training-epochs 20 \
   --simulations 800 \
-  --batch-size 64
+  --batch-size 64 \
+  --mcts-engine heuristic  # 또는 neural
+```
+
+### 성능 모드
+```bash
+# 휴리스틱 MCTS (빠름)
+python main_training.py --mcts-engine heuristic
+
+# 신경망 MCTS (정확함)  
+python main_training.py --mcts-engine neural
 ```
 
 ### 대회 제출
@@ -108,20 +114,21 @@ python testing_tool.py
 
 ## 📈 성능 최적화
 
+### 핵심 최적화 (구현 완료)
+- **조기 종료 알고리즘**: `get_valid_moves()`에서 5-6배 성능 향상
+- **GPU 자동 감지**: CUDA 사용 가능 시 자동 GPU 가속
+- **모델 자동 로드**: 훈련 재시작 시 이전 모델 자동 복원
+- **휴리스틱 MCTS**: 빠른 시뮬레이션을 위한 non-neural 모드
+
 ### 메모리 효율성
-- GameBoard 인스턴스 캐싱
-- 액션 매핑 테이블 사전 계산
+- 액션 매핑 테이블 사전 계산 (8,246개 액션)
+- GPU 메모리 자동 정리
 - 배치 단위 신경망 추론
 
-### 계산 효율성
-- 유효한 액션에 대해서만 소프트맥스 적용
-- MCTS 시뮬레이션 수 동적 조정
-- 잔차 연결을 통한 그래디언트 안정성
-
-### 시간 관리
-- 남은 시간에 따른 시뮬레이션 수 조정
-- 조기 종료 메커니즘
-- 폴백 휴리스틱 (MCTS 실패시)
+### 계산 효율성  
+- 유효한 액션에 대해서만 MCTS 확장
+- 디바이스 간 텐서 변환 최적화
+- 중복 계산 제거
 
 ## 📁 프로젝트 구조
 
@@ -209,6 +216,31 @@ NYPC/
 # 에이전트 실행 명령
 python alphazero_agent.py data.bin
 ```
+
+## 📋 현재 구현 상태
+
+### ✅ 완료된 기능
+- [x] 게임 보드 로직 및 규칙 검증
+- [x] 조기 종료 최적화 (5-6배 성능 향상)
+- [x] ConvNet 기반 신경망 아키텍처
+- [x] MCTS 알고리즘 (신경망 + 휴리스틱 모드)
+- [x] 자가학습 훈련 파이프라인
+- [x] GPU/CPU 자동 감지 및 최적화
+- [x] 모델 자동 저장/로드 시스템
+- [x] 대회 제출용 에이전트
+
+### 🚧 진행 중
+- [ ] C++ MCTS 구현 (성능 향상 목표: 10-50배)
+- [ ] 모델 로드 연속성 검증
+
+### 🔍 알려진 이슈
+- **모델 로드 연속성**: 저장된 모델이 제대로 로드되는지 추가 검증 필요
+- **Loss 초기화**: 새 실행 시 loss가 초기화되는 현상 조사 중
+
+### 🎯 다음 우선순위
+1. 모델 로드/저장 검증 완료
+2. C++ MCTS 구현 완성
+3. 성능 벤치마크 및 최적화
 
 ## 📚 참고 문헌
 

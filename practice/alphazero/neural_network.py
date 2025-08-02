@@ -226,15 +226,16 @@ class AlphaZeroTrainer:
         }
     
     
-    def save_checkpoint(self, filepath: str):
-        """모델 체크포인트 저장"""
+    def save_model(self, filepath: str):
+        """모델 저장"""
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict()
         }, filepath)
     
-    def load_checkpoint(self, filepath: str):
-        """모델 체크포인트 로드"""
+    def load_model(self, filepath: str):
+        """모델 로드"""
         checkpoint = torch.load(filepath, map_location='cpu')
         self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.model.to(self.device)  # 모델을 올바른 디바이스로 이동
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])

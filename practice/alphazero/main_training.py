@@ -105,18 +105,24 @@ def main():
     # 훈련 관리자 생성
     trainer = TrainingManager(model, project_save_dir)
     
-    # 체크포인트에서 재시작 (간단화)
-    start_iteration = 0
+    # 이전 모델 자동 로드
     if args.resume:
+        # 특정 파일 로드
         if trainer.load_model(args.resume):
             print(f"Resuming from saved model: {args.resume}")
         else:
             print(f"Could not load model: {args.resume}, starting fresh")
+    else:
+        # 자동으로 latest_model.pth 찾아서 로드
+        if trainer.load_model("latest_model.pth"):
+            print("Automatically loaded previous model: latest_model.pth")
+        else:
+            print("No previous model found, starting fresh")
     
     # 훈련 루프
     all_training_data = []
     
-    for iteration in range(start_iteration, args.iterations):
+    for iteration in range(args.iterations):
         print(f"\n{'='*20} Iteration {iteration + 1}/{args.iterations} {'='*20}")
         
         # 1. 셀프플레이 데이터 생성
