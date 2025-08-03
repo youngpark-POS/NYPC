@@ -2,18 +2,44 @@ import pybind11
 from setuptools import setup, Extension
 import sys
 import os
+import platform
 
-print("Using MSVC for C++ compilation")
+# 크로스 플랫폼 컴파일러 설정
+def detect_compiler():
+    """컴파일러 자동 감지"""
+    cc = os.environ.get("CC", "").lower()
+    cxx = os.environ.get("CXX", "").lower()
+    
+    if "mingw" in cc or "mingw" in cxx or "gcc" in cc or "g++" in cxx:
+        return "mingw"
+    elif platform.system() == "Windows":
+        return "msvc"  
+    else:
+        return "gcc"
 
-# MSVC 컴파일러 설정
-extra_compile_args = ['/std:c++17', '/O2', '/EHsc']
-extra_link_args = []
+compiler_type = detect_compiler()
 
-# MSYS2 환경변수 제거
-if "CC" in os.environ:
-    del os.environ["CC"]
-if "CXX" in os.environ:
-    del os.environ["CXX"]
+if compiler_type == "msvc":
+    print("Using MSVC for C++ compilation")
+    extra_compile_args = ['/std:c++17', '/O2', '/EHsc']
+    extra_link_args = []
+    
+    # MSVC 사용시에만 환경변수 제거
+    if "CC" in os.environ:
+        del os.environ["CC"]
+    if "CXX" in os.environ:
+        del os.environ["CXX"]
+        
+elif compiler_type == "mingw":
+    print("Using MinGW for C++ compilation")
+    extra_compile_args = ['-std=c++17', '-O3', '-fPIC']
+    extra_link_args = []
+    # MinGW 환경변수 보존
+    
+else:
+    print(f"Using GCC/Clang for {platform.system()}")
+    extra_compile_args = ['-std=c++17', '-O3', '-fPIC']
+    extra_link_args = []
 
 # C++ 확장 모듈 정의 (기존 Extension 사용)
 ext_modules = [

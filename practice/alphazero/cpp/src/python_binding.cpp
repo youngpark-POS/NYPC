@@ -10,6 +10,8 @@ PYBIND11_MODULE(fast_game_board, m) {
     // GameBoard 클래스 바인딩
     py::class_<GameBoard>(m, "GameBoard")
         .def(py::init<const std::vector<std::vector<int>>&>())
+        
+        // 메서드 바인딩
         .def("get_valid_moves", &GameBoard::get_valid_moves)
         .def("make_move", &GameBoard::make_move)
         .def("is_terminal", &GameBoard::is_terminal)
@@ -24,5 +26,12 @@ PYBIND11_MODULE(fast_game_board, m) {
         .def("encode_move", &GameBoard::encode_move)
         .def("decode_action", &GameBoard::decode_action)
         .def("get_state_tensor", &GameBoard::get_state_tensor)
-        .def("get_board", &GameBoard::get_board, py::return_value_policy::reference_internal);
+        .def("get_board", &GameBoard::get_board, py::return_value_policy::reference_internal)
+        
+        // Python 호환을 위한 속성 바인딩
+        .def_property_readonly("current_player", &GameBoard::get_current_player)
+        .def_property_readonly("pass_count", &GameBoard::get_pass_count)
+        .def_property_readonly("game_over", &GameBoard::is_game_over)
+        .def_property_readonly("winner", &GameBoard::get_winner)
+        .def_property_readonly("board", &GameBoard::get_board);
 }

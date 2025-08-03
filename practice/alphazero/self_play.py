@@ -4,7 +4,7 @@ import time
 from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
 from game_board import GameBoard
-from mcts import MCTS, MCTSPlayer
+from mcts import MCTS
 
 @dataclass
 class GameState:
@@ -245,78 +245,5 @@ class SelfPlayGenerator:
         print(f"  Value targets: {value_targets.shape}")
         
         return states, policy_targets, value_targets
-
-class CompetitivePlayer:
-    """경쟁용 플레이어 (더 강한 탐색)"""
-    
-    def __init__(self, neural_network, num_simulations: int = 1600, 
-                 temperature: float = 0.1):
-        self.player = MCTSPlayer(neural_network, num_simulations, temperature)
-        self.num_simulations = num_simulations
-        
-    def set_player_id(self, player_id: int):
-        self.player.set_player_id(player_id)
-        
-    def get_move(self, game_board: GameBoard) -> Tuple[int, int, int, int]:
-        return self.player.get_move(game_board)
-
-def evaluate_models(model1, model2, initial_board: List[List[int]], 
-                   num_games: int = 10, verbose: bool = False) -> Dict[str, float]:
-    """두 모델 간의 대전 평가"""
-    results = {'model1_wins': 0, 'model2_wins': 0, 'draws': 0}
-    
-    for game_idx in range(num_games):
-        # 플레이어 순서 랜덤하게 결정
-        if game_idx % 2 == 0:
-            player1_model, player2_model = model1, model2
-            is_flipped = False
-        else:
-            player1_model, player2_model = model2, model1  
-            is_flipped = True
-        
-        # 플레이어 생성
-        player1 = CompetitivePlayer(player1_model, num_simulations=800)
-        player2 = CompetitivePlayer(player2_model, num_simulations=800)
-        player1.set_player_id(0)
-        player2.set_player_id(1)
-        
-        # 게임 실행
-        game_board = GameBoard(initial_board)
-        players = [player1, player2]
-        move_count = 0
-        
-        while not game_board.is_terminal() and move_count < 200:
-            current_player = game_board.current_player
-            player = players[current_player]
-            
-            try:
-                move = player.get_move(game_board)
-                game_board.make_move(*move, current_player)
-                move_count += 1
-            except Exception as e:
-                if verbose:
-                    print(f"Error in game {game_idx + 1}: {e}")
-                break
-        
-        # 결과 집계
-        winner = game_board.get_winner()
-        if winner == -1:
-            results['draws'] += 1
-        elif (winner == 0 and not is_flipped) or (winner == 1 and is_flipped):
-            results['model1_wins'] += 1
-        else:
-            results['model2_wins'] += 1
-        
-        if verbose:
-            print(f"Game {game_idx + 1}: Winner = {winner}, Moves = {move_count}")
-    
-    # 승률 계산
-    total_games = sum(results.values())
-    win_rate = results['model1_wins'] / total_games if total_games > 0 else 0.0
-    
-    results['win_rate'] = win_rate
-    results['total_games'] = total_games
-    
-    return results
 
 

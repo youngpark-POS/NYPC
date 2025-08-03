@@ -18,7 +18,7 @@ try:
         
         def get_score(self):
             result = super().get_score()
-            return (result.first, result.second)
+            return (result[0], result[1])  # tuple 인덱스 접근
         
         def get_winner(self):
             winner = super().get_winner()
@@ -36,31 +36,15 @@ try:
             state_list = super().get_state_tensor(perspective_player)
             return np.array(state_list, dtype=np.float32)
         
-        @property
-        def current_player(self):
-            return self.get_current_player()
-        
-        @property
-        def pass_count(self):
-            return self.get_pass_count()
-        
-        @property
-        def game_over(self):
+        # Python과 호환성을 위한 추가 메서드들 (pybind11에서 property는 이미 정의됨)
+        def is_terminal(self):
             return self.is_game_over()
-        
-        @property
-        def winner(self):
-            return self.get_winner()
-        
-        @property
-        def board(self):
-            return self.get_board()
     
     print("C++ GameBoard 사용")
     
 except ImportError:
     # Python 폴백
-    print("Python GameBoard 폴백")
+    print("C++ GameBoard 빌드 실패, Python 구현 사용 (성능 저하 예상)")
     
     from typing import List, Tuple, Optional
     import copy
