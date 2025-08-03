@@ -179,7 +179,11 @@ class MCTS:
                 break
             
             # 1. Selection: 리프 노드까지 내려가기
-            node = self._select(root)
+            node = self._select(root, start_time)
+            
+            # Selection 후 시간 체크
+            if self.time_limit and (time.time() - start_time) > self.time_limit:
+                break
             
             # 2. Expansion and Evaluation
             if node.state.is_terminal():
@@ -187,7 +191,11 @@ class MCTS:
                 value = node.state.get_reward(perspective_player)
             else:
                 # 신경망으로 평가하고 확장
-                value = self._expand_and_evaluate(node, perspective_player)
+                value = self._expand_and_evaluate(node, perspective_player, start_time)
+            
+            # Evaluation 후 시간 체크
+            if self.time_limit and (time.time() - start_time) > self.time_limit:
+                break
             
             # 3. Backup: 결과를 루트까지 전파
             node.backup(value)
@@ -202,23 +210,34 @@ class MCTS:
         
         return root, actual_simulations
     
-    def _select(self, root: MCTSNode) -> MCTSNode:
+    def _select(self, root: MCTSNode, start_time: float) -> MCTSNode:
         """Selection 단계: UCB를 사용하여 리프까지 이동"""
         current = root
         
         while current.is_fully_expanded() and not current.state.is_terminal():
+            # 시간 제한 체크 (매 스텝마다)
+            if self.time_limit and (time.time() - start_time) > self.time_limit:
+                break
             current = current.select_child(self.c_puct)
         
         return current
     
-    def _expand_and_evaluate(self, node: MCTSNode, perspective_player: int) -> float:
+    def _expand_and_evaluate(self, node: MCTSNode, perspective_player: int, start_time: float) -> float:
         """Expansion과 Evaluation 단계"""
         state = node.state
+        
+        # 시간 제한 체크
+        if self.time_limit and (time.time() - start_time) > self.time_limit:
+            return 0.0  # 타임아웃 시 중립 값 반환
         
         if self.engine_type == 'heuristic':
             # 휴리스틱 모드: 간단한 평가
             value = heuristic_evaluate_board(state, perspective_player)
             valid_moves = state.get_valid_moves()
+            
+            # get_valid_moves 후 시간 체크
+            if self.time_limit and (time.time() - start_time) > self.time_limit:
+                return value  # 평가는 완료했으므로 value 반환
             
             # 가장 큰 박스 또는 점수 이득이 큰 것 선택
             if not valid_moves:
@@ -257,6 +276,11 @@ class MCTS:
         else:
             # 신경망 평가 (느림)
             valid_moves = state.get_valid_moves()
+            
+            # get_valid_moves 후 시간 체크
+            if self.time_limit and (time.time() - start_time) > self.time_limit:
+                return 0.0  # 타임아웃 시 중립 값 반환
+            
             try:
                 state_tensor = state.get_state_tensor(perspective_player)
                 policy_probs, value = self.neural_network.predict(

@@ -141,7 +141,8 @@ def main():
             model, 
             num_simulations=args.simulations,
             temperature=1.0 if iteration < args.iterations // 2 else 0.1,  # 후반부에는 temperature 낮춤
-            engine_type=args.mcts_engine
+            engine_type=args.mcts_engine,
+            time_limit=args.time_limit
         )
         
         game_data_list = selfplay_generator.generate_games(

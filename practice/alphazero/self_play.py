@@ -32,9 +32,9 @@ class SelfPlayGenerator:
     """자기대국 데이터 생성기"""
     
     def __init__(self, neural_network, num_simulations: int = 800, 
-                 temperature: float = 1.0, c_puct: float = 1.0, engine_type: str = 'neural'):
+                 temperature: float = 1.0, c_puct: float = 1.0, engine_type: str = 'neural', time_limit: float = None):
         self.neural_network = neural_network
-        self.mcts = MCTS(neural_network, num_simulations, c_puct, time_limit=None, engine_type=engine_type)
+        self.mcts = MCTS(neural_network, num_simulations, c_puct, time_limit=time_limit, engine_type=engine_type)
         self.temperature = temperature
         self.num_simulations = num_simulations
         self.engine_type = engine_type
@@ -154,7 +154,7 @@ class SelfPlayGenerator:
                 # 랜덤 보드 사용 여부에 따라 보드 선택
                 if use_random_boards:
                     import random
-                    game_board = [[random.randint(1, 5) for _ in range(17)] for _ in range(10)]
+                    game_board = [[random.randint(1, 9) for _ in range(17)] for _ in range(10)]
                 else:
                     game_board = initial_board
                     
