@@ -11,8 +11,13 @@ import time
 import numpy as np
 import torch
 
-# 현재 디렉토리를 Python 패스에 추가
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# 프로젝트 루트에서 실행할 수 있도록 경로 설정
+script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(script_dir)
+
+# 프로젝트 루트에서 실행되는 경우를 대비한 경로 추가
+if os.path.basename(os.getcwd()) != 'alphazero':
+    sys.path.append(os.path.join(os.getcwd(), 'practice', 'alphazero'))
 
 from game_board import GameBoard
 from neural_network import AlphaZeroNet
@@ -124,14 +129,20 @@ def main():
         # 1. 셀프플레이 데이터 생성
         start_time = time.time()
         
+        # MCTS 엔진 초기화
+        mcts = MCTS(
+            model, 
+            num_simulations=args.simulations,
+            c_puct=1.0,
+            time_limit=args.time_limit
+        )
+        
         selfplay_generator = SelfPlayGenerator(
             model, 
             num_simulations=args.simulations,
             temperature=1.0 if iteration < args.iterations // 2 else 0.1,  # 후반부에는 temperature 낮춤
             engine_type=args.mcts_engine
         )
-        # MCTS에 시간 제한 설정
-        selfplay_generator.mcts.time_limit = args.time_limit
         
         game_data_list = selfplay_generator.generate_games(
             initial_board, 
