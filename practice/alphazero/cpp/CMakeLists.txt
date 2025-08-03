@@ -10,7 +10,21 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+# Windows MSVC용 릴리즈 플래그
+if(MSVC)
+    set(CMAKE_CXX_FLAGS_RELEASE "/O2 /DNDEBUG")
+else()
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+endif()
+
+# Python 찾기 (현재 활성화된 Python 사용)
+set(Python3_EXECUTABLE ${PYTHON_EXECUTABLE})
+if(NOT Python3_EXECUTABLE)
+    find_program(Python3_EXECUTABLE NAMES python python3 
+        PATHS $ENV{CONDA_PREFIX}/bin $ENV{VIRTUAL_ENV}/bin
+        NO_DEFAULT_PATH)
+endif()
+find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 
 # pybind11 찾기
 find_package(pybind11 REQUIRED)
@@ -21,8 +35,11 @@ set(SOURCES
     src/python_binding.cpp
 )
 
-# Python 확장 모듈 생성 (setup.py와 일치)
+# Python 확장 모듈 생성 (Python3 사용)
 pybind11_add_module(fast_game_board ${SOURCES})
+
+# Python 라이브러리 명시적으로 링크
+target_link_libraries(fast_game_board PRIVATE Python3::Python)
 
 # 컴파일러별 최적화 플래그
 if(MSVC)

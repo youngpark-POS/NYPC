@@ -1,0 +1,24 @@
+# NYPC AlphaZero C++ GameBoard 빌드 요구사항
+# 
+# 이 파일은 C++ 확장 모듈을 빌드하는데 필요한 Python 패키지를 정의합니다.
+# 
+# 설치 방법:
+#   pip install -r requirements.txt
+#
+# 또는 conda 환경에서:
+#   conda create -n nypc_dev python=3.11
+#   conda activate nypc_dev
+#   pip install -r requirements.txt
+
+# 필수 패키지
+pybind11>=2.10.0        # C++ Python 바인딩
+numpy>=1.20.0           # 수치 연산 (선택사항, 개발시 편의)
+
+# 개발 도구 (선택사항)
+cmake>=3.12.0           # 빌드 시스템 (pip 버전, 시스템 설치 권장)
+setuptools>=45.0        # Python 패키징 (setup.py 대안 빌드용)
+wheel>=0.35.0           # 바이너리 패키지 생성
+
+# 테스트 도구 (선택사항)
+pytest>=6.0.0          # 단위 테스트
+pytest-benchmark       # 성능 벤치마크

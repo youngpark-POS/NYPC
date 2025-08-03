@@ -7,9 +7,6 @@ import sys
 import os
 import numpy as np
 
-# C++ 모듈 경로 추가
-sys.path.append(os.path.join(os.path.dirname(__file__), 'cpp'))
-
 try:
     from fast_game_board import GameBoard as CPPGameBoard
     

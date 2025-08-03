@@ -1,0 +1,39 @@
+# NYPC AlphaZero C++ GameBoard Conda 환경 설정
+#
+# 사용 방법:
+#   conda env create -f environment.yml
+#   conda activate nypc_dev
+#
+# 또는 기존 환경에 패키지만 설치:
+#   conda env update -f environment.yml
+
+name: nypc_dev
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Python 환경
+  - python=3.11
+  
+  # 빌드 도구
+  - cmake>=3.12
+  - ninja              # 빌드 시스템 (CMake 백엔드)
+  
+  # Python 패키지
+  - pip
+  - setuptools
+  - wheel
+  
+  # 과학 계산 (선택사항)
+  - numpy>=1.20
+  
+  # 개발 도구 (선택사항)
+  - pytest
+  - ipython            # 대화형 Python 셸
+  
+  # pip으로만 설치 가능한 패키지
+  - pip:
+    - pybind11>=2.10.0
+    - pytest-benchmark
