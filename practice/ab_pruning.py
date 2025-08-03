@@ -27,8 +27,8 @@ class Game:
         ]
         # self.first = first
 
-    def _calculate_board_value(self):
-        return sum([sum(row) for row in self.territory_board])
+    def _calculate_board_value(self, r1=0, c1=0, r2=BOARD_ROW - 1, c2=BOARD_COLUMN - 1):
+        return sum([sum(row[c1 : c2 + 1]) for row in self.territory_board[r1 : r2 + 1]])
 
     def _simulate(
         self,
@@ -53,11 +53,10 @@ class Game:
         original_board = deepcopy(self.board)
         original_territory_board = deepcopy(self.territory_board)
         best_move = MOVE_PASS
-        best_value = -math.inf if is_max_player else math.inf
-        is_terminal = True
+        best_value = self._calculate_board_value()
 
         if depth == GAMETREE_SEARCH_DEPTH:  #  In case of maximum searching depth
-            return self._calculate_board_value(), best_move
+            return best_value, best_move
 
         for r1 in range(BOARD_ROW):
             for r2 in range(r1, BOARD_ROW):
@@ -65,8 +64,6 @@ class Game:
                     for c2 in range(c1, BOARD_COLUMN):
                         if not self._isValid(r1, c1, r2, c2):
                             continue
-
-                        is_terminal = False
 
                         self.updateMove(r1, c1, r2, c2, is_max_player)
                         state_value, _best_move = self._simulate(
@@ -89,10 +86,7 @@ class Game:
                         if alpha >= beta:  # pruning
                             return best_value, best_move
 
-        if is_terminal:
-            return self._calculate_board_value(), MOVE_PASS
-        else:
-            return best_value, best_move
+        return best_value, best_move
 
     # 사각형 (r1, c1) ~ (r2, c2)이 유효한지 검사 (합이 10이고, 네 변을 모두 포함)
     def _isValid(self, r1, c1, r2, c2) -> bool:
