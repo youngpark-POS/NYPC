@@ -233,7 +233,7 @@ class AlphaZeroTrainer:
     
     def load_model(self, filepath: str):
         """모델 로드 (Optimizer 디바이스 이동 포함)"""
-        checkpoint = torch.load(filepath, map_location='cpu')
+        checkpoint = torch.load(filepath, map_location='cpu', weights_only=False)
         
         # 모델 상태 로드
         self.model.load_state_dict(checkpoint['model_state_dict'])
