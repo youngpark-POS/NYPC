@@ -29,30 +29,70 @@ def heuristic_evaluate_board(game_board: GameBoard, player: int) -> float:
     return max(-1.0, min(1.0, score_diff))
 
 class MCTSNode:
-    """MCTS 트리의 노드"""
+    """Path Compression 기반 MCTS 노드 - action sequence만 저장"""
     
-    def __init__(self, state: GameBoard, parent: 'MCTSNode' = None, 
-                 action: Tuple[int, int, int, int] = None, prior_prob: float = 0.0):
-        self.state = state
-        self.parent = parent
-        self.action = action  # 부모에서 이 노드로 오는 액션
-        self.prior_prob = prior_prob  # 신경망이 예측한 사전 확률
+    def __init__(self, action_sequence: List[Tuple[int, int, int, int]] = None, prior_prob: float = 0.0):
+        # 핵심: 루트부터 이 노드까지의 모든 action들
+        self.action_sequence = action_sequence or []
+        self.prior_prob = prior_prob
         
+        # 자식 노드들
         self.children: Dict[Tuple[int, int, int, int], 'MCTSNode'] = {}
+        
+        # MCTS 통계
         self.visit_count = 0
         self.value_sum = 0.0
         self.is_expanded = False
         
-    def is_fully_expanded(self) -> bool:
+        # 성능 최적화용 캐시
+        self._cached_state = None
+        self._cache_valid = False
+        self._depth = len(self.action_sequence)  # 미리 계산해둠
+    
+    def get_game_state(self, root_state: GameBoard) -> GameBoard:
+        """Action sequence를 순차 적용하여 현재 상태 재구성"""
+        if self._cache_valid and self._cached_state is not None:
+            return self._cached_state
+        
+        # 루트 상태에서 시작 (1회만 복사)
+        state = root_state.copy()
+        
+        # Action sequence 순차 적용
+        for action in self.action_sequence:
+            r1, c1, r2, c2 = action
+            if not state.make_move(r1, c1, r2, c2, state.current_player):
+                # 잘못된 action이면 에러 (디버깅용)
+                print(f"⚠️ Invalid action in sequence: {action}")
+                break
+        
+        # 캐시 저장
+        self._cached_state = state
+        self._cache_valid = True
+        return state
+    
+    def invalidate_cache(self):
+        """캐시 무효화"""
+        self._cache_valid = False
+        self._cached_state = None
+        
+        # 자식들의 캐시도 무효화 (필요시)
+        for child in self.children.values():
+            child.invalidate_cache()
+    
+    def is_fully_expanded(self, root_state: GameBoard) -> bool:
         """모든 가능한 액션이 확장되었는지 확인"""
         if not self.is_expanded:
             return False
-        valid_moves = self.state.get_valid_moves()
+        
+        current_state = self.get_game_state(root_state)
+        valid_moves = current_state.get_valid_moves()
+        
         if not valid_moves:  # 유효한 움직임이 없으면 패스만 가능
             return (-1, -1, -1, -1) in self.children
+        
         return len(self.children) >= len(valid_moves)
     
-    def get_ucb_score(self, c_puct: float = 1.0) -> float:
+    def get_ucb_score(self, parent_visit_count: int, c_puct: float = 1.0) -> float:
         """UCB 점수 계산"""
         if self.visit_count == 0:
             return float('inf')
@@ -61,10 +101,10 @@ class MCTSNode:
         q_value = self.value_sum / self.visit_count
         
         # UCB 보너스
-        if self.parent is None:
+        if parent_visit_count == 0:
             return q_value
         
-        exploration_bonus = c_puct * self.prior_prob * math.sqrt(self.parent.visit_count) / (1 + self.visit_count)
+        exploration_bonus = c_puct * self.prior_prob * math.sqrt(parent_visit_count) / (1 + self.visit_count)
         
         return q_value + exploration_bonus
     
@@ -74,7 +114,7 @@ class MCTSNode:
         best_child = None
         
         for child in self.children.values():
-            score = child.get_ucb_score(c_puct)
+            score = child.get_ucb_score(self.visit_count, c_puct)
             if score > best_score:
                 best_score = score
                 best_child = child
@@ -82,29 +122,32 @@ class MCTSNode:
         return best_child
     
     def expand(self, policy_probs: List[float], valid_moves: List[Tuple[int, int, int, int]]):
-        """노드 확장"""
+        """노드 확장 - action sequence 확장만"""
         self.is_expanded = True
         
-        # valid_moves에는 이미 패스가 포함되어 있어야 함
-        # 각 움직임에 대해 자식 노드 생성
+        # 각 움직임에 대해 새로운 action sequence 생성
         for i, move in enumerate(valid_moves):
             if i < len(policy_probs):
                 prior_prob = policy_probs[i]
             else:
-                prior_prob = 1.0 / len(valid_moves)  # 균등 분포
+                prior_prob = 1.0 / len(valid_moves)
             
-            new_state = self.state.copy()
-            if new_state.make_move(*move, self.state.current_player):
-                self.children[move] = MCTSNode(new_state, self, move, prior_prob)
+            # 새로운 action sequence = 현재 sequence + 새 action
+            child_sequence = self.action_sequence + [move]
+            
+            # 자식 노드 생성 (메모리 최소화!)
+            child = MCTSNode(
+                action_sequence=child_sequence,
+                prior_prob=prior_prob
+            )
+            
+            self.children[move] = child
     
     def backup(self, value: float):
-        """백프로파게이션"""
+        """백프로파게이션 - 부모로 재귀 호출 없이"""
+        # 현재 노드 업데이트
         self.visit_count += 1
         self.value_sum += value
-        
-        if self.parent is not None:
-            # 상대방의 관점에서는 가치를 뒤집음
-            self.parent.backup(-value)
     
     def get_action_probs(self, temperature: float = 1.0) -> Dict[Tuple[int, int, int, int], float]:
         """방문 횟수 기반 액션 확률 분포 반환"""
@@ -115,34 +158,26 @@ class MCTSNode:
         visit_counts = [self.children[action].visit_count for action in actions]
         
         if temperature == 0:
-            # 탐욕적 선택: 최대 방문 횟수 액션만 1.0
+            # 탐욕적 선택
             best_action_idx = np.argmax(visit_counts)
             probs = [0.0] * len(actions)
             probs[best_action_idx] = 1.0
         else:
             # 온도 조절된 확률 분포
             if temperature == float('inf'):
-                # 균등 분포
                 probs = [1.0 / len(actions)] * len(actions)
             else:
-                # 표준 AlphaZero 방식: visit_count^(1/T)
                 visit_counts = np.array(visit_counts, dtype=np.float64)
-                
-                # 방문 횟수 0 처리 (최소값 보장)
                 visit_counts = np.maximum(visit_counts, 1e-8)
                 
-                # 온도 적용
                 scaled_counts = visit_counts ** (1.0 / temperature)
-                
-                # 정규화
                 total = np.sum(scaled_counts)
+                
                 if total > 0:
                     probs = scaled_counts / total
                 else:
-                    # 안전장치: 균등 분포
                     probs = np.ones(len(actions)) / len(actions)
                 
-                # 정규화 검증 및 보정
                 prob_sum = np.sum(probs)
                 if abs(prob_sum - 1.0) > 1e-6:
                     probs = probs / prob_sum
@@ -152,121 +187,88 @@ class MCTSNode:
         return dict(zip(actions, probs))
 
 class MCTS:
-    """Monte Carlo Tree Search 알고리즘"""
+    """Path Compression 기반 Ultra-Efficient MCTS"""
     
-    def __init__(self, neural_network, num_simulations: int = 800, 
+    def __init__(self, neural_network=None, num_simulations: int = 800, 
                  c_puct: float = 1.0, time_limit: float = None, engine_type: str = 'neural'):
         self.neural_network = neural_network
         self.num_simulations = num_simulations
         self.c_puct = c_puct
-        self.time_limit = time_limit  # 시간 제한 (초)
-        self.engine_type = engine_type  # 'neural' or 'heuristic'
-        
+        self.time_limit = time_limit
+        self.engine_type = engine_type
+    
     def search(self, root_state: GameBoard, perspective_player: int) -> Tuple[MCTSNode, int]:
-        """MCTS 검색 실행"""
-        root = MCTSNode(root_state.copy())
+        """Path 기반 MCTS 검색 - 메모리 최적화"""
+        # 루트 노드 생성 (action sequence 없음)
+        root = MCTSNode()
+        
         start_time = time.time()
         actual_simulations = 0
         
-        # 디버깅: 첫 번째 시뮬레이션 시간 측정
-        first_sim_time = None
-        
         for simulation in range(self.num_simulations):
-            sim_start = time.time()
-            
             # 시간 제한 체크
             if self.time_limit and (time.time() - start_time) > self.time_limit:
                 break
             
-            # 1. Selection: 리프 노드까지 내려가기
-            node = self._select(root, start_time)
+            # 1. Selection - 리프 노드까지 이동
+            path_to_leaf = []  # 방문한 노드들의 경로
+            current = root
             
-            # Selection 후 시간 체크
-            if self.time_limit and (time.time() - start_time) > self.time_limit:
-                break
+            while current.is_fully_expanded(root_state) and not current.get_game_state(root_state).is_terminal():
+                current = current.select_child(self.c_puct)
+                path_to_leaf.append(current)
             
             # 2. Expansion and Evaluation
-            if node.state.is_terminal():
-                # 터미널 노드면 실제 게임 결과 사용
-                value = node.state.get_reward(perspective_player)
+            current_state = current.get_game_state(root_state)
+            
+            if current_state.is_terminal():
+                value = current_state.get_reward(perspective_player)
             else:
-                # 신경망으로 평가하고 확장
-                value = self._expand_and_evaluate(node, perspective_player, start_time)
+                value = self._expand_and_evaluate(current, perspective_player, root_state)
             
-            # Evaluation 후 시간 체크
-            if self.time_limit and (time.time() - start_time) > self.time_limit:
-                break
+            # 3. Backup - 경로상의 모든 노드 업데이트
+            current.backup(value)
+            for i, node in enumerate(reversed(path_to_leaf[:-1])):  # 역순으로
+                # 상대방 관점에서는 값 반전
+                value = -value
+                node.backup(value)
             
-            # 3. Backup: 결과를 루트까지 전파
-            node.backup(value)
             actual_simulations += 1
-            
-            # 첫 번째 시뮬레이션 시간 기록
-            if first_sim_time is None:
-                first_sim_time = time.time() - sim_start
-        
-        total_time = time.time() - start_time
-        
         
         return root, actual_simulations
     
-    def _select(self, root: MCTSNode, start_time: float) -> MCTSNode:
-        """Selection 단계: UCB를 사용하여 리프까지 이동"""
-        current = root
-        
-        while current.is_fully_expanded() and not current.state.is_terminal():
-            # 시간 제한 체크 (매 스텝마다)
-            if self.time_limit and (time.time() - start_time) > self.time_limit:
-                break
-            current = current.select_child(self.c_puct)
-        
-        return current
-    
-    def _expand_and_evaluate(self, node: MCTSNode, perspective_player: int, start_time: float) -> float:
-        """Expansion과 Evaluation 단계"""
-        state = node.state
-        
-        # 시간 제한 체크
-        if self.time_limit and (time.time() - start_time) > self.time_limit:
-            return 0.0  # 타임아웃 시 중립 값 반환
+    def _expand_and_evaluate(self, node: MCTSNode, perspective_player: int, root_state: GameBoard) -> float:
+        """노드 확장 및 평가"""
+        # 현재 상태 가져오기 (필요시 재구성)
+        current_state = node.get_game_state(root_state)
         
         if self.engine_type == 'heuristic':
-            # 휴리스틱 모드: 간단한 평가
-            value = heuristic_evaluate_board(state, perspective_player)
-            valid_moves = state.get_valid_moves()
+            # 휴리스틱 평가
+            value = heuristic_evaluate_board(current_state, perspective_player)
+            valid_moves = current_state.get_valid_moves()
             
-            # get_valid_moves 후 시간 체크
-            if self.time_limit and (time.time() - start_time) > self.time_limit:
-                return value  # 평가는 완료했으므로 value 반환
-            
-            # 가장 큰 박스 또는 점수 이득이 큰 것 선택
+            # 휴리스틱 정책 계산
             if not valid_moves:
                 policy_probs = []
             else:
                 move_scores = []
-                
                 for move in valid_moves:
-                    if move == (-1, -1, -1, -1):  # 패스
-                        move_scores.append(0.1)  # 낮은 점수
+                    if move == (-1, -1, -1, -1):
+                        move_scores.append(0.1)
                     else:
                         r1, c1, r2, c2 = move
-                        # 박스 면적 계산
                         area = (r2 - r1 + 1) * (c2 - c1 + 1)
                         
-                        # 박스 내부 점수 합계 계산
                         box_sum = 0
                         for i in range(r1, r2 + 1):
                             for j in range(c1, c2 + 1):
-                                if state.board[i][j] > 0:
-                                    box_sum += state.board[i][j]
+                                if current_state.board[i][j] > 0:
+                                    box_sum += current_state.board[i][j]
                         
-                        # 휴리스틱: 박스 면적 - 박스 내부 점수 합계
                         heuristic_score = area - box_sum
                         move_scores.append(heuristic_score)
                 
-                # 정규화 (소프트맥스 스타일)
                 if move_scores:
-                    # 수치 안정성을 위해 최대값 빼기
                     max_score = max(move_scores)
                     exp_scores = [np.exp(score - max_score) for score in move_scores]
                     total = sum(exp_scores)
@@ -274,28 +276,23 @@ class MCTS:
                 else:
                     policy_probs = [1.0 / len(valid_moves)] * len(valid_moves)
         else:
-            # 신경망 평가 (느림)
-            valid_moves = state.get_valid_moves()
-            
-            # get_valid_moves 후 시간 체크
-            if self.time_limit and (time.time() - start_time) > self.time_limit:
-                return 0.0  # 타임아웃 시 중립 값 반환
+            # 신경망 평가
+            valid_moves = current_state.get_valid_moves()
             
             try:
-                state_tensor = state.get_state_tensor(perspective_player)
+                state_tensor = current_state.get_state_tensor(perspective_player)
                 policy_probs, value = self.neural_network.predict(
-                    state_tensor, valid_moves, state
+                    state_tensor, valid_moves, current_state
                 )
-            except Exception as e:
-                # 신경망 오류 시 기본값 사용
+            except Exception:
                 if valid_moves:
                     policy_probs = [1.0 / len(valid_moves)] * len(valid_moves)
                 else:
                     policy_probs = [1.0]
                 value = 0.0
         
-        # 노드 확장
-        if not node.is_expanded:
+        # 노드 확장 (action sequence만 확장!)
+        if not node.is_expanded and valid_moves:
             node.expand(policy_probs, valid_moves)
         
         return value

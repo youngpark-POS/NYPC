@@ -25,6 +25,7 @@ from self_play import SelfPlayGenerator
 from training import TrainingManager
 from mcts import MCTS
 
+
 def load_initial_board(input_file: str = "practice/testing/input.txt"):
     """초기 보드 로드"""
     try:
@@ -129,12 +130,14 @@ def main():
         # 1. 셀프플레이 데이터 생성
         start_time = time.time()
         
-        # MCTS 엔진 초기화
+        # MCTS 엔진 초기화 (Path Compression 기반)
+        print(f"   🚀 Using Path Compression MCTS")
         mcts = MCTS(
-            model, 
+            neural_network=model, 
             num_simulations=args.simulations,
             c_puct=1.0,
-            time_limit=args.time_limit
+            time_limit=args.time_limit,
+            engine_type=args.mcts_engine
         )
         
         selfplay_generator = SelfPlayGenerator(
