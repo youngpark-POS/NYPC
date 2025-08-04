@@ -104,7 +104,7 @@ class SelfPlayGenerator:
         final_result = {}
         if game_board.is_terminal():
             winner = game_board.get_winner()
-            if winner == -1:  # 무승부
+            if winner == -1 or winner is None:  # 무승부 또는 승자 결정 불가
                 final_result = {0: 0.0, 1: 0.0}
             else:
                 final_result = {winner: 1.0, 1-winner: -1.0}
