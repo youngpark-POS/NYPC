@@ -128,21 +128,25 @@ class TrainingManager:
             # 새 게임만 사용
             training_games = game_data_list
         
-        # 3. 데이터 수집
+        # 3. 데이터 수집 (4배 증강 적용)
         from self_play import SelfPlayGenerator
         generator = SelfPlayGenerator(self.model)
-        states, policy_targets, value_targets = generator.collect_training_data(training_games)
+        states, policy_targets, value_targets = generator.collect_training_data_with_augmentation(training_games, use_augmentation=True)
         
         if len(states) == 0:
             print("No training data available!")
             return {'total_loss': 0, 'policy_loss': 0, 'value_loss': 0}
         
+        # 4배 증강으로 인한 배치 크기 조정
+        adjusted_batch_size = max(8, batch_size // 4)  # 최소 8, 기본의 1/4
+        
         if verbose:
             print(f"Training on {len(states)} samples for {epochs} epochs")
+            print(f"Adjusted batch size: {batch_size} → {adjusted_batch_size} (due to 4x augmentation)")
         
         # 데이터셋 생성 (8246 크기 고정 policy_targets)
         dataset = AlphaZeroDataset(states, policy_targets, value_targets)
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        dataloader = DataLoader(dataset, batch_size=adjusted_batch_size, shuffle=True)
         
         # 훈련 실행
         epoch_stats = {'total_loss': 0, 'policy_loss': 0, 'value_loss': 0}

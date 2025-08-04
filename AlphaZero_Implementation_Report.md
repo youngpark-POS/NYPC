@@ -6,9 +6,10 @@
 3. [신경망 아키텍처](#신경망-아키텍처)
 4. [MCTS 알고리즘](#mcts-알고리즘)
 5. [훈련 파이프라인](#훈련-파이프라인)
-6. [성능 최적화](#성능-최적화)
-7. [성능 병목 분석](#성능-병목-분석)
-8. [실험 결과](#실험-결과)
+6. [데이터 증강 시스템](#데이터-증강-시스템)
+7. [성능 최적화](#성능-최적화)
+8. [성능 병목 분석](#성능-병목-분석)
+9. [실험 결과](#실험-결과)
 
 ---
 
@@ -476,6 +477,112 @@ class NeuralNetworkTrainer:
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.model.to(self.device)  # 올바른 디바이스로 이동
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+```
+
+---
+
+## 데이터 증강 시스템
+
+### 개요
+AlphaZero의 학습 효율성을 높이기 위해 **4배 데이터 증강 시스템**을 구현했습니다. 10×17 보드의 기하학적 특성을 활용하여 원본 데이터로부터 3가지 추가 변형을 생성합니다.
+
+### 변환 유형
+```python
+transform_types = [
+    'original',        # 원본
+    'rotate_180',      # 180도 회전
+    'flip_vertical',   # 상하 대칭
+    'flip_horizontal'  # 좌우 대칭
+]
+```
+
+### 핵심 도전과제
+**10×17 보드의 제약**:
+- 90도/270도 회전 불가능 (가로세로 비율 다름)
+- 8246개 액션 공간의 복잡한 인덱스 매핑
+- 보드별로 다른 액션 매핑 테이블
+
+### 혁신적 해결책: 인덱스→인덱스 직접 매핑
+
+**기존 방식의 문제점**:
+```python
+# 느리고 오류 발생 위험
+action_idx → decode_action() → transform_coordinates() → encode_move() → new_idx
+```
+
+**새로운 방식**:
+```python
+# O(1) 직접 매핑
+action_idx → transform_map[transform_type][action_idx] → new_idx
+```
+
+### 구현 아키텍처
+
+**1. 표준 액션 공간 구축**:
+```python
+class FastDataAugmentation:
+    def _build_standard_action_space(self):
+        action_idx = 0
+        for r1 in range(10):
+            for c1 in range(17):
+                for r2 in range(r1, 10):
+                    for c2 in range(c1, 17):
+                        area = (r2 - r1 + 1) * (c2 - c1 + 1)
+                        if area >= 2:
+                            action = (r1, c1, r2, c2)
+                            self.action_to_index[action] = action_idx
+                            action_idx += 1
+```
+
+**2. 변환 매핑 테이블 생성**:
+```python
+def _build_transformation_tables(self):
+    for transform_type in self.transform_types:
+        self.transform_map[transform_type] = np.full(8246, -1, dtype=np.int32)
+    
+    for original_idx, action in enumerate(self.standard_actions):
+        for transform_type in self.transform_types:
+            transformed_action = self._transform_action(action, transform_type)
+            transformed_idx = self.action_to_index[transformed_action]
+            self.transform_map[transform_type][original_idx] = transformed_idx
+```
+
+**3. 초고속 정책 벡터 변환**:
+```python
+def transform_policy_vector_fast(self, policy_vector, transform_type):
+    new_policy = np.zeros_like(policy_vector)
+    transform_indices = self.transform_map[transform_type]
+    
+    for original_idx in range(len(policy_vector)):
+        if policy_vector[original_idx] > 1e-8:
+            transformed_idx = transform_indices[original_idx]
+            if transformed_idx >= 0:
+                new_policy[transformed_idx] = policy_vector[original_idx]
+    
+    return new_policy / np.sum(new_policy)  # 정규화
+```
+
+### 성능 결과
+- **메모리 사용량**: 0.126MB (4 × 8246 × 4바이트)
+- **변환 속도**: O(1) 인덱스 매핑으로 초고속
+- **정확성**: GameBoard와 100% 일치 검증
+- **훈련 데이터**: 4배 증가로 일반화 성능 향상
+
+### 통합 시스템
+```python
+class SelfPlayGenerator:
+    def collect_training_data_with_augmentation(self, games_data, use_augmentation=True):
+        # 기본 데이터 수집
+        states, policies, values = self.collect_training_data(games_data)
+        
+        if not use_augmentation:
+            return states, policies, values
+        
+        # 4배 증강 적용
+        if self.augmenter is None:
+            self.augmenter = FastDataAugmentation()  # 한 번만 초기화
+        
+        return self.augmenter.augment_training_data_fast(states, policies, values)
 ```
 
 ---

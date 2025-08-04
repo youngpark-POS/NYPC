@@ -5,6 +5,7 @@ from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
 from game_board import GameBoard
 from mcts import MCTS
+from fast_data_augmentation import FastDataAugmentation
 
 @dataclass
 class GameState:
@@ -45,6 +46,9 @@ class SelfPlayGenerator:
         self.engine_type = engine_type
         self.num_threads = num_threads
         self.batch_size = batch_size
+        
+        # 데이터 증강기 (한 번만 초기화)
+        self.augmenter = None
         
     def play_game(self, initial_board: List[List[int]], verbose: bool = False) -> SelfPlayData:
         """한 게임 자기대국 실행"""
@@ -252,5 +256,34 @@ class SelfPlayGenerator:
         print(f"  Value targets: {value_targets.shape}")
         
         return states, policy_targets, value_targets
+    
+    def collect_training_data_with_augmentation(self, games_data: List[SelfPlayData], 
+                                               use_augmentation: bool = True) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """게임 데이터를 훈련용 형태로 변환 (4배 데이터 증강 포함)"""
+        if not games_data:
+            return np.array([]), np.array([]), np.array([])
+        
+        # 기본 훈련 데이터 수집
+        states, policy_targets, value_targets = self.collect_training_data(games_data)
+        
+        if not use_augmentation or len(states) == 0:
+            return states, policy_targets, value_targets
+        
+        # 데이터 증강 초기화 (한 번만)
+        if self.augmenter is None:
+            print("Initializing data augmentation (one-time setup)...")
+            self.augmenter = FastDataAugmentation()
+        
+        print("Applying 4x data augmentation...")
+        augmented_states, augmented_policies, augmented_values = self.augmenter.augment_training_data_fast(
+            states, policy_targets, value_targets
+        )
+        
+        print(f"Final augmented data shapes:")
+        print(f"  States: {augmented_states.shape}")
+        print(f"  Policy targets: {augmented_policies.shape}")
+        print(f"  Value targets: {augmented_values.shape}")
+        
+        return augmented_states, augmented_policies, augmented_values
 
 

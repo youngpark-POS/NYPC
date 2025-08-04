@@ -45,9 +45,11 @@ NYPC(New York Programming Contest) 버섯 게임을 위한 AlphaZero 기반 강�
 - 방문 횟수 기반 최종 행동 선택
 - 백프로파게이션을 통한 가치 업데이트
 
-🚀 NEW: 멀티스레드 최적화
+🚀 NEW: 멀티스레드 최적화 + 데이터 증강
 - ThreadPoolExecutor로 시뮬레이션 병렬화
 - NeuralNetworkBatchProcessor로 GPU 배치 처리
+- 4배 데이터 증강: 180도 회전, 상하/좌우 대칭
+- 인덱스→인덱스 직접 매핑으로 초고속 변환
 - 스레드 안전한 GameBoard 상태 관리
 - 동적 배치 크기 조정 (타임아웃 0.01초)
 ```
@@ -164,7 +166,9 @@ python testing_tool.py
 ### 성능 향상 결과
 - **CPU 활용도**: 단일 스레드 → 멀티스레드 (4-8배 향상)
 - **GPU 효율성**: 개별 추론 → 배치 처리 (5-10배 향상)  
-- **전체 훈련 속도**: **최대 40배 향상** 가능
+- **데이터 다양성**: 원본 → 4배 증강 (회전/대칭)
+- **훈련 효율성**: 인덱스 직접 매핑으로 변환 오버헤드 최소화
+- **전체 훈련 속도**: **최대 40배 향상** + **4배 더 다양한 데이터**
 - **실시간 대국**: 더 빠른 MCTS 응답 시간
 
 ## 📁 프로젝트 구조
@@ -180,7 +184,10 @@ NYPC/
 │   │   ├── alphazero_agent.py     # 대회 제출용 에이전트
 │   │   ├── self_play.py           # 셀프플레이 데이터 생성
 │   │   ├── training.py            # 훈련 파이프라인
-│   │   └── main_training.py       # 메인 훈련 스크립트
+│   │   ├── main_training.py       # 메인 훈련 스크립트
+│   │   ├── data_augmentation.py       # 데이터 증강 시스템
+│   │   ├── compact_data.py        # 압축된 데이터 저장
+│   │   └── game_history.py        # 게임 히스토리 관리
 │   ├── models/
 │   │   ├── latest_model.pth       # 최신 모델
 │   │   └── data.bin               # 대회 제출용 바이너리
