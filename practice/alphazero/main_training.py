@@ -60,6 +60,8 @@ def main():
     parser.add_argument('--verbose', action='store_true', help='Verbose output')
     parser.add_argument('--mcts-engine', type=str, default='neural', choices=['neural', 'heuristic'], 
                        help='MCTS engine type: neural (slow, accurate) or heuristic (fast, simple)')
+    parser.add_argument('--num-threads', type=int, default=4, help='Number of threads for MCTS')
+    parser.add_argument('--mcts-batch-size', type=int, default=32, help='Batch size for MCTS neural network processing')
     
     args = parser.parse_args()
     
@@ -130,14 +132,18 @@ def main():
         # 1. 셀프플레이 데이터 생성
         start_time = time.time()
         
-        # MCTS 엔진 초기화 (Path Compression 기반)
-        print(f"   🚀 Using Path Compression MCTS")
+        # MCTS 엔진 초기화 (Path Compression 기반 + 멀티스레딩)
+        print(f"   🚀 Using Path Compression MCTS with {args.num_threads} threads")
+        if args.mcts_engine == 'neural':
+            print(f"   🔥 MCTS neural network batch size: {args.mcts_batch_size}")
         mcts = MCTS(
             neural_network=model, 
             num_simulations=args.simulations,
             c_puct=1.0,
             time_limit=args.time_limit,
-            engine_type=args.mcts_engine
+            engine_type=args.mcts_engine,
+            num_threads=args.num_threads,
+            batch_size=args.mcts_batch_size
         )
         
         selfplay_generator = SelfPlayGenerator(
@@ -145,7 +151,9 @@ def main():
             num_simulations=args.simulations,
             temperature=1.0 if iteration < args.iterations // 2 else 0.1,  # 후반부에는 temperature 낮춤
             engine_type=args.mcts_engine,
-            time_limit=args.time_limit
+            time_limit=args.time_limit,
+            num_threads=args.num_threads,
+            batch_size=args.mcts_batch_size
         )
         
         game_data_list = selfplay_generator.generate_games(
@@ -169,7 +177,7 @@ def main():
         final_stats = trainer.train_from_self_play_data(
             game_data_list,
             epochs=args.training_epochs,
-            batch_size=args.batch_size,
+            batch_size=args.mcts_batch_size,
             verbose=args.verbose
         )
         

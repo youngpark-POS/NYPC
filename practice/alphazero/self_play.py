@@ -32,12 +32,19 @@ class SelfPlayGenerator:
     """자기대국 데이터 생성기"""
     
     def __init__(self, neural_network, num_simulations: int = 800, 
-                 temperature: float = 1.0, c_puct: float = 1.0, engine_type: str = 'neural', time_limit: float = None):
+                 temperature: float = 1.0, c_puct: float = 1.0, engine_type: str = 'neural', 
+                 time_limit: float = None, num_threads: int = 4, batch_size: int = 32):
         self.neural_network = neural_network
-        self.mcts = MCTS(neural_network, num_simulations, c_puct, time_limit=time_limit, engine_type=engine_type)
+        self.mcts = MCTS(
+            neural_network, num_simulations, c_puct, 
+            time_limit=time_limit, engine_type=engine_type,
+            num_threads=num_threads, batch_size=batch_size
+        )
         self.temperature = temperature
         self.num_simulations = num_simulations
         self.engine_type = engine_type
+        self.num_threads = num_threads
+        self.batch_size = batch_size
         
     def play_game(self, initial_board: List[List[int]], verbose: bool = False) -> SelfPlayData:
         """한 게임 자기대국 실행"""

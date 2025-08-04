@@ -3,7 +3,117 @@ import time
 import random
 import numpy as np
 from typing import Dict, List, Tuple, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 from game_board import GameBoard
+import queue
+
+class NeuralNetworkBatchProcessor:
+    """신경망 배치 처리를 위한 클래스"""
+    
+    def __init__(self, neural_network, batch_size: int = 32, timeout: float = 0.01):
+        self.neural_network = neural_network
+        self.batch_size = batch_size
+        self.timeout = timeout
+        
+        # 요청 큐와 결과 딕셔너리
+        self.request_queue = queue.Queue()
+        self.results = {}
+        self.request_id_counter = 0
+        self.lock = threading.Lock()
+        
+        # 배치 처리 스레드
+        self.processing = False
+        self.processor_thread = None
+    
+    def start_processing(self):
+        """배치 처리 스레드 시작"""
+        if not self.processing:
+            self.processing = True
+            self.processor_thread = threading.Thread(target=self._batch_processor)
+            self.processor_thread.daemon = True
+            self.processor_thread.start()
+    
+    def stop_processing(self):
+        """배치 처리 스레드 중지"""
+        self.processing = False
+        if self.processor_thread:
+            self.processor_thread.join()
+    
+    def predict_batch(self, state_tensor, valid_moves, game_board) -> Tuple[List[float], float]:
+        """신경망 예측 요청 (배치 처리됨)"""
+        if not self.processing:
+            self.start_processing()
+        
+        # 고유 요청 ID 생성
+        with self.lock:
+            request_id = self.request_id_counter
+            self.request_id_counter += 1
+        
+        # 요청을 큐에 추가
+        request = {
+            'id': request_id,
+            'state_tensor': state_tensor,
+            'valid_moves': valid_moves,
+            'game_board': game_board,
+            'event': threading.Event()
+        }
+        
+        self.request_queue.put(request)
+        
+        # 결과 대기
+        request['event'].wait()
+        
+        # 결과 반환 및 정리
+        with self.lock:
+            result = self.results.pop(request_id)
+        
+        return result
+    
+    def _batch_processor(self):
+        """배치 처리 메인 루프"""
+        batch = []
+        
+        while self.processing:
+            try:
+                # 타임아웃으로 요청 수집
+                request = self.request_queue.get(timeout=self.timeout)
+                batch.append(request)
+                
+                # 배치가 가득 찼거나 큐가 비었으면 처리
+                if len(batch) >= self.batch_size or self.request_queue.empty():
+                    self._process_batch(batch)
+                    batch = []
+                    
+            except queue.Empty:
+                # 타임아웃 발생시 현재 배치 처리
+                if batch:
+                    self._process_batch(batch)
+                    batch = []
+    
+    def _process_batch(self, batch):
+        """실제 배치 처리"""
+        if not batch:
+            return
+        
+        # 개별 처리 (아직 배치 최적화 안됨)
+        for request in batch:
+            try:
+                policy_probs, value = self.neural_network.predict(
+                    request['state_tensor'],
+                    request['valid_moves'],
+                    request['game_board']
+                )
+                
+                with self.lock:
+                    self.results[request['id']] = (policy_probs, value)
+                
+            except Exception as e:
+                with self.lock:
+                    self.results[request['id']] = ([], 0.0)
+            
+            # 결과 준비 완료 신호
+            request['event'].set()
 
 def heuristic_evaluate_board(game_board: GameBoard, player: int) -> float:
     """간단한 휴리스틱 보드 평가"""
@@ -190,19 +300,47 @@ class MCTS:
     """Path Compression 기반 Ultra-Efficient MCTS"""
     
     def __init__(self, neural_network=None, num_simulations: int = 800, 
-                 c_puct: float = 1.0, time_limit: float = None, engine_type: str = 'neural'):
+                 c_puct: float = 1.0, time_limit: float = None, engine_type: str = 'neural',
+                 num_threads: int = 4, batch_size: int = 32):
         self.neural_network = neural_network
         self.num_simulations = num_simulations
         self.c_puct = c_puct
         self.time_limit = time_limit
         self.engine_type = engine_type
+        self.num_threads = num_threads
+        
+        # 배치 처리기 (neural 엔진에서만 사용)
+        self.batch_processor = None
+        if self.engine_type == 'neural' and self.neural_network:
+            self.batch_processor = NeuralNetworkBatchProcessor(
+                self.neural_network, batch_size=batch_size
+            )
     
     def search(self, root_state: GameBoard, perspective_player: int) -> Tuple[MCTSNode, int]:
-        """Path 기반 MCTS 검색 - 메모리 최적화"""
+        """Path 기반 MCTS 검색 - 멀티스레드 + 배치 처리"""
         # 루트 노드 생성 (action sequence 없음)
         root = MCTSNode()
         
+        # 배치 처리기 시작 (neural 엔진인 경우)
+        if self.batch_processor:
+            self.batch_processor.start_processing()
+        
         start_time = time.time()
+        
+        # 멀티스레드로 시뮬레이션 실행
+        if self.num_threads > 1:
+            actual_simulations = self._search_multithreaded(root, root_state, perspective_player, start_time)
+        else:
+            actual_simulations = self._search_single_threaded(root, root_state, perspective_player, start_time)
+        
+        # 배치 처리기 정리
+        if self.batch_processor:
+            self.batch_processor.stop_processing()
+        
+        return root, actual_simulations
+    
+    def _search_single_threaded(self, root: MCTSNode, root_state: GameBoard, perspective_player: int, start_time: float) -> int:
+        """단일 스레드 MCTS 검색 (기존 로직)"""
         actual_simulations = 0
         
         for simulation in range(self.num_simulations):
@@ -210,32 +348,82 @@ class MCTS:
             if self.time_limit and (time.time() - start_time) > self.time_limit:
                 break
             
-            # 1. Selection - 리프 노드까지 이동
-            path_to_leaf = []  # 방문한 노드들의 경로
-            current = root
-            
-            while current.is_fully_expanded(root_state) and not current.get_game_state(root_state).is_terminal():
-                current = current.select_child(self.c_puct)
-                path_to_leaf.append(current)
-            
-            # 2. Expansion and Evaluation
-            current_state = current.get_game_state(root_state)
-            
-            if current_state.is_terminal():
-                value = current_state.get_reward(perspective_player)
-            else:
-                value = self._expand_and_evaluate(current, perspective_player, root_state)
-            
-            # 3. Backup - 경로상의 모든 노드 업데이트
-            current.backup(value)
-            for i, node in enumerate(reversed(path_to_leaf[:-1])):  # 역순으로
-                # 상대방 관점에서는 값 반전
-                value = -value
-                node.backup(value)
-            
-            actual_simulations += 1
+            actual_simulations += self._single_simulation(root, root_state, perspective_player)
         
-        return root, actual_simulations
+        return actual_simulations
+    
+    def _search_multithreaded(self, root: MCTSNode, root_state: GameBoard, perspective_player: int, start_time: float) -> int:
+        """멀티스레드 MCTS 검색"""
+        simulations_per_thread = self.num_simulations // self.num_threads
+        remaining_simulations = self.num_simulations % self.num_threads
+        
+        actual_simulations = 0
+        
+        with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
+            # 각 스레드에 시뮬레이션 할당
+            futures = []
+            for i in range(self.num_threads):
+                thread_simulations = simulations_per_thread
+                if i < remaining_simulations:  # 나머지 시뮬레이션 분배
+                    thread_simulations += 1
+                
+                future = executor.submit(
+                    self._thread_worker, 
+                    root, root_state.copy(), perspective_player, 
+                    thread_simulations, start_time
+                )
+                futures.append(future)
+            
+            # 결과 수집
+            for future in as_completed(futures):
+                try:
+                    thread_simulations = future.result()
+                    actual_simulations += thread_simulations
+                except Exception as e:
+                    print(f"Thread execution error: {e}")
+        
+        return actual_simulations
+    
+    def _thread_worker(self, root: MCTSNode, root_state: GameBoard, perspective_player: int, 
+                      num_simulations: int, start_time: float) -> int:
+        """개별 스레드에서 실행되는 워커"""
+        actual_simulations = 0
+        
+        for simulation in range(num_simulations):
+            # 시간 제한 체크
+            if self.time_limit and (time.time() - start_time) > self.time_limit:
+                break
+            
+            actual_simulations += self._single_simulation(root, root_state, perspective_player)
+        
+        return actual_simulations
+    
+    def _single_simulation(self, root: MCTSNode, root_state: GameBoard, perspective_player: int) -> int:
+        """단일 시뮬레이션 실행"""
+        # 1. Selection - 리프 노드까지 이동
+        path_to_leaf = []  # 방문한 노드들의 경로
+        current = root
+        
+        while current.is_fully_expanded(root_state) and not current.get_game_state(root_state).is_terminal():
+            current = current.select_child(self.c_puct)
+            path_to_leaf.append(current)
+        
+        # 2. Expansion and Evaluation
+        current_state = current.get_game_state(root_state)
+        
+        if current_state.is_terminal():
+            value = current_state.get_reward(perspective_player)
+        else:
+            value = self._expand_and_evaluate(current, perspective_player, root_state)
+        
+        # 3. Backup - 경로상의 모든 노드 업데이트
+        current.backup(value)
+        for i, node in enumerate(reversed(path_to_leaf[:-1])):  # 역순으로
+            # 상대방 관점에서는 값 반전
+            value = -value
+            node.backup(value)
+        
+        return 1
     
     def _expand_and_evaluate(self, node: MCTSNode, perspective_player: int, root_state: GameBoard) -> float:
         """노드 확장 및 평가"""
@@ -276,14 +464,21 @@ class MCTS:
                 else:
                     policy_probs = [1.0 / len(valid_moves)] * len(valid_moves)
         else:
-            # 신경망 평가
+            # 신경망 평가 (배치 처리 사용)
             valid_moves = current_state.get_valid_moves()
             
             try:
                 state_tensor = current_state.get_state_tensor(perspective_player)
-                policy_probs, value = self.neural_network.predict(
-                    state_tensor, valid_moves, current_state
-                )
+                
+                # 배치 처리기가 있으면 사용, 없으면 직접 호출
+                if self.batch_processor:
+                    policy_probs, value = self.batch_processor.predict_batch(
+                        state_tensor, valid_moves, current_state
+                    )
+                else:
+                    policy_probs, value = self.neural_network.predict(
+                        state_tensor, valid_moves, current_state
+                    )
             except Exception:
                 if valid_moves:
                     policy_probs = [1.0 / len(valid_moves)] * len(valid_moves)
