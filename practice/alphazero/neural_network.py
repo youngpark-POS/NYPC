@@ -52,11 +52,13 @@ class AlphaZeroNet(nn.Module):
         
         self.res_block1 = ResidualBlock(hidden_channels)
         self.res_block2 = ResidualBlock(hidden_channels)
+        self.res_block3 = ResidualBlock(hidden_channels)
+        self.res_block4 = ResidualBlock(hidden_channels)
         
         # 정책 헤드 (1채널 컨볼루션 + FC)
         self.policy_conv = nn.Conv2d(hidden_channels, 1, kernel_size=1)
         self.policy_bn = nn.BatchNorm2d(1)
-        self.policy_fc = nn.Linear(1 * board_height * board_width, self.action_space_size)
+        self.policy_fc = nn.Linear(board_height * board_width, self.action_space_size)
         
         # 가치 헤드 (1채널 컨볼루션 + FC)
         self.value_conv = nn.Conv2d(hidden_channels, 1, kernel_size=1)
@@ -72,6 +74,8 @@ class AlphaZeroNet(nn.Module):
         x = F.relu(self.input_bn(self.input_conv(x)))
         x = self.res_block1(x)
         x = self.res_block2(x)
+        x = self.res_block3(x)
+        x = self.res_block4(x)
         
         # 정책 헤드
         policy = F.relu(self.policy_bn(self.policy_conv(x)))
