@@ -520,7 +520,7 @@ action_idx → transform_map[transform_type][action_idx] → new_idx
 
 **1. 표준 액션 공간 구축**:
 ```python
-class FastDataAugmentation:
+class DataAugmentation:
     def _build_standard_action_space(self):
         action_idx = 0
         for r1 in range(10):
@@ -580,7 +580,7 @@ class SelfPlayGenerator:
         
         # 4배 증강 적용
         if self.augmenter is None:
-            self.augmenter = FastDataAugmentation()  # 한 번만 초기화
+            self.augmenter = DataAugmentation()  # 한 번만 초기화
         
         return self.augmenter.augment_training_data_fast(states, policies, values)
 ```

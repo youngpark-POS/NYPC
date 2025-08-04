@@ -23,7 +23,7 @@ class DataAugmentation:
             'flip_horizontal'
         ]
         
-        print("Building standard action space...")
+        # Build action space and transformation tables silently
         self.standard_actions = []
         self.action_to_index = {}
         self.index_to_action = {}
@@ -31,13 +31,8 @@ class DataAugmentation:
         # GameBoard와 동일한 순서로 액션 공간 구축
         self._build_standard_action_space()
         
-        print(f"Standard action space: {len(self.standard_actions)} actions")
-        
-        print("Building transformation mapping tables...")
         self.transform_map = {}
         self._build_transformation_tables()
-        
-        print("DataAugmentation initialized!")
     
     def _build_standard_action_space(self):
         """GameBoard와 동일한 순서로 표준 액션 공간 구축"""
@@ -149,7 +144,7 @@ class DataAugmentation:
         augmented_policies = []
         augmented_values = []
         
-        print("Applying 4x data augmentation...")
+        # Applying 4x data augmentation...
         start_time = time.time()
         
         for i in range(len(states)):
@@ -176,7 +171,7 @@ class DataAugmentation:
         augmented_values = np.array(augmented_values, dtype=np.float32)
         
         elapsed = time.time() - start_time
-        print(f"Data augmentation: {len(states)} → {len(augmented_states)} samples in {elapsed:.3f}s (4x)")
+        # Data augmentation completed
         
         return augmented_states, augmented_policies, augmented_values
     

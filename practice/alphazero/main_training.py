@@ -65,7 +65,7 @@ def main():
     
     # 게임 히스토리 관련 옵션 (항상 활성화)
     parser.add_argument('--history-size', type=int, default=10000, help='Maximum number of games to store in history')
-    parser.add_argument('--history-mix-ratio', type=float, default=0.5, help='Ratio of history games to mix with new games (0.0-1.0)')
+    parser.add_argument('--history-mix-ratio', type=float, default=0.9, help='Ratio of history games to mix with new games (0.0-1.0)')
     
     args = parser.parse_args()
     

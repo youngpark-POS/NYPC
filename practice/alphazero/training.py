@@ -142,7 +142,7 @@ class TrainingManager:
         
         if verbose:
             print(f"Training on {len(states)} samples for {epochs} epochs")
-            print(f"Adjusted batch size: {batch_size} → {adjusted_batch_size} (due to 4x augmentation)")
+            # Batch size adjusted for 4x augmentation
         
         # 데이터셋 생성 (8246 크기 고정 policy_targets)
         dataset = AlphaZeroDataset(states, policy_targets, value_targets)

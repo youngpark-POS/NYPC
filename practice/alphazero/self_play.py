@@ -5,7 +5,7 @@ from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
 from game_board import GameBoard
 from mcts import MCTS
-from fast_data_augmentation import FastDataAugmentation
+from data_augmentation import DataAugmentation
 
 @dataclass
 class GameState:
@@ -271,10 +271,10 @@ class SelfPlayGenerator:
         
         # 데이터 증강 초기화 (한 번만)
         if self.augmenter is None:
-            print("Initializing data augmentation (one-time setup)...")
-            self.augmenter = FastDataAugmentation()
+            # Initialize data augmentation
+            self.augmenter = DataAugmentation()
         
-        print("Applying 4x data augmentation...")
+        # Apply 4x data augmentation
         augmented_states, augmented_policies, augmented_values = self.augmenter.augment_training_data_fast(
             states, policy_targets, value_targets
         )
