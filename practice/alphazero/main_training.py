@@ -63,6 +63,10 @@ def main():
     parser.add_argument('--num-threads', type=int, default=4, help='Number of threads for MCTS')
     parser.add_argument('--mcts-batch-size', type=int, default=32, help='Batch size for MCTS neural network processing')
     
+    # 게임 히스토리 관련 옵션 (항상 활성화)
+    parser.add_argument('--history-size', type=int, default=10000, help='Maximum number of games to store in history')
+    parser.add_argument('--history-mix-ratio', type=float, default=0.5, help='Ratio of history games to mix with new games (0.0-1.0)')
+    
     args = parser.parse_args()
     
     # 프로젝트별 디렉토리 생성
@@ -83,6 +87,8 @@ def main():
     print(f"  Save directory: {project_save_dir}")
     print(f"  Random boards: Always enabled")
     print(f"  MCTS engine: {args.mcts_engine}")
+    print(f"  Game history: {args.history_size} games max")
+    print(f"  History mix ratio: {args.history_mix_ratio}")
     print("=" * 60)
     
     # 디렉토리 생성
@@ -106,8 +112,8 @@ def main():
     device_info = f"GPU: {torch.cuda.get_device_name()}" if torch.cuda.is_available() else "CPU"
     print(f"Device: {device_info}")
     
-    # 훈련 관리자 생성
-    trainer = TrainingManager(model, project_save_dir)
+    # 훈련 관리자 생성 (히스토리 항상 활성화)
+    trainer = TrainingManager(model, project_save_dir, max_history_games=args.history_size)
     
     # 이전 모델 자동 로드
     if args.resume:
@@ -133,9 +139,9 @@ def main():
         start_time = time.time()
         
         # MCTS 엔진 초기화 (Path Compression 기반 + 멀티스레딩)
-        print(f"   🚀 Using Path Compression MCTS with {args.num_threads} threads")
+        print(f"   Using Path Compression MCTS with {args.num_threads} threads")
         if args.mcts_engine == 'neural':
-            print(f"   🔥 MCTS neural network batch size: {args.mcts_batch_size}")
+            print(f"   MCTS neural network batch size: {args.mcts_batch_size}")
         mcts = MCTS(
             neural_network=model, 
             num_simulations=args.simulations,
@@ -178,7 +184,8 @@ def main():
             game_data_list,
             epochs=args.training_epochs,
             batch_size=args.mcts_batch_size,
-            verbose=args.verbose
+            verbose=args.verbose,
+            history_mix_ratio=args.history_mix_ratio
         )
         
         training_time = time.time() - start_time
@@ -215,6 +222,13 @@ def main():
         print(f"Final policy loss: {stats['latest_policy_loss']:.4f}")
         print(f"Final value loss: {stats['latest_value_loss']:.4f}")
         print(f"Best total loss: {stats['min_total_loss']:.4f}")
+    
+    # 히스토리 통계 출력
+    history_stats = trainer.get_history_stats()
+    print(f"\nGame History Summary:")
+    print(f"Total games stored: {history_stats['total_games']}")
+    print(f"Storage size: {history_stats['file_size_mb']:.1f} MB")
+    print(f"Storage full: {'Yes' if history_stats['is_full'] else 'No'}")
     
     print(f"Models saved in: {project_save_dir}")
     print("Training completed successfully!")

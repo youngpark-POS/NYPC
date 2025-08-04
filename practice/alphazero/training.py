@@ -25,7 +25,7 @@ class AlphaZeroDataset(Dataset):
 class TrainingManager:
     """알파제로 훈련 관리 클래스"""
     
-    def __init__(self, model: AlphaZeroNet, save_dir: str = "practice/models"):
+    def __init__(self, model: AlphaZeroNet, save_dir: str = "practice/models", max_history_games: int = 10000):
         self.model = model
         self.trainer = AlphaZeroTrainer(model)
         self.save_dir = save_dir
@@ -38,6 +38,32 @@ class TrainingManager:
         
         # 저장 디렉토리 생성
         os.makedirs(save_dir, exist_ok=True)
+        
+        # 게임 히스토리 관리 (항상 활성화)
+        try:
+            from game_history import GameHistoryManager
+            history_path = os.path.join(save_dir, "game_history.h5")
+            self.history_manager = GameHistoryManager(
+                storage_path=history_path,
+                max_games=max_history_games
+            )
+            print(f"Game history: {max_history_games} games max")
+        except ImportError as e:
+            print(f"Error: h5py package is required for game history storage.")
+            print(f"Please install it with: pip install h5py>=3.7.0")
+            raise ImportError(f"Missing required dependency: {e}")
+        except Exception as e:
+            print(f"Warning: Could not initialize game history: {e}")
+            print("Falling back to temporary directory...")
+            # 임시 디렉토리 사용
+            import tempfile
+            temp_dir = tempfile.mkdtemp(prefix="alphazero_history_")
+            temp_path = os.path.join(temp_dir, "game_history.h5")
+            self.history_manager = GameHistoryManager(
+                storage_path=temp_path,
+                max_games=max_history_games
+            )
+            print(f"Using temporary history storage: {temp_path}")
     
     def train_on_batch(self, states: torch.Tensor, policy_targets: List[List[float]], 
                        value_targets: torch.Tensor, valid_moves_list: List[List[Tuple[int, int, int, int]]]) -> dict:
@@ -76,12 +102,36 @@ class TrainingManager:
         return epoch_stats
     
     def train_from_self_play_data(self, game_data_list: List[SelfPlayData], 
-                                 epochs: int = 10, batch_size: int = 32, verbose: bool = True) -> dict:
-        """셀프플레이 데이터로 훈련"""
-        # 데이터 수집
+                                 epochs: int = 10, batch_size: int = 32, verbose: bool = True, 
+                                 history_mix_ratio: float = 0.0) -> dict:
+        """셀프플레이 데이터로 훈련 (히스토리 지원)"""
+        
+        # 1. 새 게임 데이터를 히스토리에 저장 (항상 수행)
+        if game_data_list:
+            save_stats = self.history_manager.save_games(game_data_list)
+            if verbose:
+                print(f"Saved {save_stats['saved']} games to history (total: {save_stats['total_games']})")
+        
+        # 2. 훈련 데이터 준비 (히스토리와 새 게임 혼합)
+        training_games = []
+        
+        if history_mix_ratio > 0.0:
+            # 히스토리와 새 게임 혼합
+            history_count = int(len(game_data_list) * history_mix_ratio / (1 - history_mix_ratio)) if history_mix_ratio < 1.0 else len(game_data_list) * 2
+            history_games = self.history_manager.get_training_batch(history_count, mix_recent=True)
+            
+            if verbose:
+                print(f"Using {len(game_data_list)} new games + {len(history_games)} history games")
+            
+            training_games = game_data_list + history_games
+        else:
+            # 새 게임만 사용
+            training_games = game_data_list
+        
+        # 3. 데이터 수집
         from self_play import SelfPlayGenerator
         generator = SelfPlayGenerator(self.model)
-        states, policy_targets, value_targets = generator.collect_training_data(game_data_list)
+        states, policy_targets, value_targets = generator.collect_training_data(training_games)
         
         if len(states) == 0:
             print("No training data available!")
@@ -203,6 +253,16 @@ class TrainingManager:
             'avg_total_loss': np.mean(self.training_history['total_loss']),
             'min_total_loss': np.min(self.training_history['total_loss'])
         }
+    
+    def get_history_stats(self) -> dict:
+        """게임 히스토리 통계 반환"""
+        stats = self.history_manager.get_storage_stats()
+        stats['history_enabled'] = True
+        return stats
+    
+    def save_games_to_history(self, game_data_list: List[SelfPlayData]) -> dict:
+        """게임들을 히스토리에 저장"""
+        return self.history_manager.save_games(game_data_list)
 
 class LearningRateScheduler:
     """학습률 스케줄러"""
