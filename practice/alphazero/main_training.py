@@ -50,10 +50,10 @@ def main():
     parser.add_argument('--iterations', type=int, default=5, help='Number of training iterations')
     parser.add_argument('--selfplay-games', type=int, default=20, help='Number of self-play games per iteration')
     parser.add_argument('--training-epochs', type=int, default=10, help='Training epochs per iteration')
-    parser.add_argument('--simulations', type=int, default=400, help='MCTS simulations per move')
+    parser.add_argument('--simulations', type=int, default=300, help='MCTS simulations per move')
     parser.add_argument('--time-limit', type=float, default=1.0, help='MCTS time limit in seconds')
     parser.add_argument('--batch-size', type=int, default=32, help='Training batch size')
-    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
+    parser.add_argument('--lr', type=float, default=0.0005, help='Learning rate')
     parser.add_argument('--save-dir', type=str, default='practice/models', help='Model save directory')
     parser.add_argument('--project-name', type=str, default='mushroom_game', help='Project name for model directory')
     parser.add_argument('--resume', type=str, default=None, help='Resume from checkpoint')
@@ -64,7 +64,7 @@ def main():
     parser.add_argument('--mcts-batch-size', type=int, default=32, help='Batch size for MCTS neural network processing')
     
     # 게임 히스토리 관련 옵션 (항상 활성화)
-    parser.add_argument('--history-size', type=int, default=10000, help='Maximum number of games to store in history')
+    parser.add_argument('--history-size', type=int, default=1000, help='Maximum number of games to store in history')
     parser.add_argument('--history-mix-ratio', type=float, default=0.9, help='Ratio of history games to mix with new games (0.0-1.0)')
     
     args = parser.parse_args()
