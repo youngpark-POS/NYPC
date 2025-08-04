@@ -275,7 +275,7 @@ class SelfPlayGenerator:
             self.augmenter = DataAugmentation()
         
         # Apply 4x data augmentation
-        augmented_states, augmented_policies, augmented_values = self.augmenter.augment_training_data_fast(
+        augmented_states, augmented_policies, augmented_values = self.augmenter.augment_training_data(
             states, policy_targets, value_targets
         )
         
