@@ -1,0 +1,19 @@
+{
+    "ab_executable": "practice/testing/ab_pruning.exe",
+    "input_boards_file": "practice/testing/input.txt",
+    "output_path": "practice/models/test/game_history.h5",
+    "games_to_generate": 50,
+    "timeout_per_game": 300,
+    "verbose": true,
+    "policy_distribution": {
+        "ab_move_ratio": 0.85,
+        "noise_ratio": 0.15
+    },
+    "board_generation": {
+        "use_random_boards": true,
+        "random_seed": null,
+        "board_count": 10,
+        "min_mushroom_value": 1,
+        "max_mushroom_value": 9
+    }
+}
