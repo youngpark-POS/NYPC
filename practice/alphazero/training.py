@@ -219,8 +219,13 @@ class TrainingManager:
         filepath = os.path.join(self.save_dir, filename)
         model_data = self.model.state_dict()
         
+        # 텐서들을 numpy 배열로 변환하여 저장
+        binary_data = {}
+        for key, tensor in model_data.items():
+            binary_data[key] = tensor.cpu().numpy()
+        
         with open(filepath, 'wb') as f:
-            pickle.dump(model_data, f)
+            pickle.dump(binary_data, f)
         
         print(f"Binary model saved to {filepath}")
     

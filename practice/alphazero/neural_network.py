@@ -3,8 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from typing import List, Tuple
-# GPU/CPU 자동 감지
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# CPU 모드 강제 사용 (GPU/CPU 장치 불일치 방지)
+device = torch.device('cpu')
 
 
 
@@ -107,16 +107,26 @@ class AlphaZeroClassificationLoss(nn.Module):
                 pred_r2_anchor = predicted_boxes[batch_indices, r1_coords, c1_coords, anchor, 0]  # (N,)
                 pred_c2_anchor = predicted_boxes[batch_indices, r1_coords, c1_coords, anchor, 1]  # (N,)
                 
-                # 완벽한 매칭 찾기 (벡터화)
-                perfect_match = (pred_r2_anchor == true_r2) & (pred_c2_anchor == true_c2)  # (N,)
+                # 부드러운 매칭 찾기 (허용 오차 적용)
+                tolerance = 1.0
+                r_diff = torch.abs(pred_r2_anchor.float() - true_r2.float())
+                c_diff = torch.abs(pred_c2_anchor.float() - true_c2.float())
+                soft_match = (r_diff <= tolerance) & (c_diff <= tolerance)  # (N,)
                 
-                # 매칭되는 타겟들의 확률을 레이블에 할당
-                matched_indices = torch.where(perfect_match)[0]
+                # 거리 기반 가중치 적용
+                matched_indices = torch.where(soft_match)[0]
                 if len(matched_indices) > 0:
+                    # 거리에 따른 가중치 계산
+                    r_diff_matched = r_diff[matched_indices]
+                    c_diff_matched = c_diff[matched_indices]
+                    distance_weights = torch.clamp(1.0 - (r_diff_matched + c_diff_matched) / (2 * tolerance), 0.0, 1.0)
+                    
+                    # 가중치가 적용된 확률을 레이블에 할당
+                    weighted_probs = target_probs[matched_indices] * distance_weights
                     target_labels[batch_indices[matched_indices], 
                                 r1_coords[matched_indices], 
                                 c1_coords[matched_indices], 
-                                anchor] = target_probs[matched_indices]
+                                anchor] = weighted_probs
         
         # 예측된 confidence 추출
         predicted_conf = torch.zeros(batch_size, H, W, 3, device=device)
@@ -246,11 +256,19 @@ class AlphaZeroNet(nn.Module):
                         pred_r2 = int(torch.round(torch.clamp(r1 + delta_r, 0, H-1)).item())
                         pred_c2 = int(torch.round(torch.clamp(c1 + delta_c, 0, W-1)).item())
                         
-                        # 완벽한 매칭인 경우 confidence 사용
-                        if pred_r2 == r2 and pred_c2 == c2:
-                            confidence = torch.sigmoid(conf_raw).item()
-                            if confidence > best_confidence:
-                                best_confidence = confidence
+                        # 허용 오차를 가진 부드러운 매칭 (정확도 향상)
+                        tolerance = 1.0  # 1픽셀 오차 허용
+                        r_diff = abs(pred_r2 - r2)
+                        c_diff = abs(pred_c2 - c2)
+                        
+                        if r_diff <= tolerance and c_diff <= tolerance:
+                            # 거리 기반 가중치 (가까울수록 높은 confidence)
+                            distance_penalty = max(0, 1.0 - (r_diff + c_diff) / (2 * tolerance))
+                            raw_confidence = torch.sigmoid(conf_raw).item()
+                            weighted_confidence = raw_confidence * distance_penalty
+                            
+                            if weighted_confidence > best_confidence:
+                                best_confidence = weighted_confidence
                     
                     confidences.append(best_confidence if best_confidence > 0 else 1e-6)
                 else:

@@ -83,10 +83,7 @@ public:
     }
 
     int getSearchDepth() {
-        if (turn_count <= 10) return 4;
-        if (turn_count <= 20) return 4;
-        if (turn_count <= 30) return 5;
-        return 6;
+        return 4;  // 고정 depth 4로 속도 개선
     }
 
     // returns {best_value, r1, c1, r2, c2}

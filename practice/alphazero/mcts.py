@@ -149,20 +149,24 @@ class MCTSNode:
         # 자식 노드들
         self.children: Dict[Tuple[int, int, int, int], 'MCTSNode'] = {}
         
-        # MCTS 통계
+        # MCTS 통계 (스레드 안전성을 위한 락)
         self.visit_count = 0
         self.value_sum = 0.0
         self.is_expanded = False
+        self._lock = threading.Lock()  # 스레드 안전성
         
-        # 성능 최적화용 캐시
+        # 성능 최적화용 캐시 (스레드 안전 캐싱)
         self._cached_state = None
         self._cache_valid = False
+        self._cache_lock = threading.Lock()  # 캐시 액세스 락
         self._depth = len(self.action_sequence)  # 미리 계산해둠
     
     def get_game_state(self, root_state: GameBoard) -> GameBoard:
-        """Action sequence를 순차 적용하여 현재 상태 재구성"""
-        if self._cache_valid and self._cached_state is not None:
-            return self._cached_state
+        """Action sequence를 순차 적용하여 현재 상태 재구성 (스레드 안전)"""
+        # 캐시 확인 (스레드 안전)
+        with self._cache_lock:
+            if self._cache_valid and self._cached_state is not None:
+                return self._cached_state.copy()  # 복사본 반환 (스레드 안전성)
         
         # 루트 상태에서 시작 (1회만 복사)
         state = root_state.copy()
@@ -172,12 +176,14 @@ class MCTSNode:
             r1, c1, r2, c2 = action
             if not state.make_move(r1, c1, r2, c2, state.current_player):
                 # 잘못된 action이면 에러 (디버깅용)
-                print(f"⚠️ Invalid action in sequence: {action}")
+                print(f"Invalid action in sequence: {action}")
                 break
         
-        # 캐시 저장
-        self._cached_state = state
-        self._cache_valid = True
+        # 캐시 저장 (스레드 안전)
+        with self._cache_lock:
+            self._cached_state = state.copy()  # 독립적인 복사본 저장
+            self._cache_valid = True
+        
         return state
     
     def invalidate_cache(self):
@@ -254,10 +260,11 @@ class MCTSNode:
             self.children[move] = child
     
     def backup(self, value: float):
-        """백프로파게이션 - 부모로 재귀 호출 없이"""
-        # 현재 노드 업데이트
-        self.visit_count += 1
-        self.value_sum += value
+        """백프로파게이션 - 부모로 재귀 호출 없이 (스레드 안전)"""
+        # 현재 노드 업데이트 (스레드 안전)
+        with self._lock:
+            self.visit_count += 1
+            self.value_sum += value
     
     def get_action_probs(self, temperature: float = 1.0) -> Dict[Tuple[int, int, int, int], float]:
         """방문 횟수 기반 액션 확률 분포 반환"""
@@ -416,12 +423,20 @@ class MCTS:
         else:
             value = self._expand_and_evaluate(current, perspective_player, root_state)
         
-        # 3. Backup - 경로상의 모든 노드 업데이트
-        current.backup(value)
-        for i, node in enumerate(reversed(path_to_leaf[:-1])):  # 역순으로
-            # 상대방 관점에서는 값 반전
-            value = -value
-            node.backup(value)
+        # 3. Backup - 경로상의 모든 노드 업데이트 (플레이어 인식 값 백업)
+        # 현재 노드부터 루트까지 백업 (플레이어 관점 고려)
+        all_nodes = [current] + list(reversed(path_to_leaf))
+        
+        for i, node in enumerate(all_nodes):
+            # 노드의 깊이(move 수)를 통해 현재 플레이어 결정
+            node_depth = len(node.action_sequence) if hasattr(node, 'action_sequence') else i
+            current_player = perspective_player if node_depth % 2 == 0 else (1 - perspective_player)
+            
+            # perspective_player 관점에서 값 조정
+            if current_player == perspective_player:
+                node.backup(value)  # 같은 플레이어면 그대로
+            else:
+                node.backup(-value)  # 다른 플레이어면 반전
         
         return 1
     
