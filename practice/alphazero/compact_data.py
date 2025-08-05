@@ -131,9 +131,10 @@ class CompactDataConverter:
         state_tensor = game_state.state_tensor
         board_state = CompactDataConverter._extract_board_from_tensor(state_tensor)
         
-        # 정책 벡터에서 유효한 움직임과 확률 추출
+        # 정책 타겟에서 움직임과 확률 추출 (이미 박스 리스트 형태)
         policy_target = game_state.policy_target
-        valid_moves, move_probs = CompactDataConverter._extract_moves_from_policy(policy_target)
+        valid_moves = [(box[0], box[1], box[2], box[3]) for box in policy_target]
+        move_probs = [box[4] for box in policy_target]
         
         # 실제 선택된 움직임 추정 (가장 높은 확률의 움직임)
         if valid_moves and move_probs:
@@ -164,14 +165,15 @@ class CompactDataConverter:
             compact_state.board_state, compact_state.player
         )
         
-        # sparse한 정책을 전체 8246 크기 벡터로 확장
-        policy_vector = CompactDataConverter._expand_policy_vector(
-            compact_state.valid_moves, compact_state.move_probabilities
-        )
+        # 움직임과 확률을 박스 리스트로 변환
+        policy_target = []
+        for move, prob in zip(compact_state.valid_moves, compact_state.move_probabilities):
+            r1, c1, r2, c2 = move
+            policy_target.append((r1, c1, r2, c2, prob))
         
         return GameState(
             state_tensor=state_tensor,
-            policy_target=policy_vector,
+            policy_target=policy_target,
             player=compact_state.player,
             move_number=compact_state.move_number,
             mcts_simulations=compact_state.mcts_simulations,
@@ -245,30 +247,6 @@ class CompactDataConverter:
         
         return state
     
-    @staticmethod
-    def _expand_policy_vector(valid_moves: List[Tuple[int, int, int, int]], 
-                            move_probs: List[float]) -> np.ndarray:
-        """sparse한 움직임들을 전체 8246 크기 정책 벡터로 확장"""
-        from game_board import GameBoard
-        
-        # 임시 보드 생성 (액션 인코딩용)
-        temp_board = [[1] * 17 for _ in range(10)]
-        temp_game = GameBoard(temp_board)
-        action_space_size = temp_game.get_action_space_size()
-        
-        policy_vector = np.zeros(action_space_size, dtype=np.float32)
-        
-        for move, prob in zip(valid_moves, move_probs):
-            action_idx = temp_game.encode_move(*move)
-            if action_idx is not None:
-                policy_vector[action_idx] = prob
-        
-        # 정규화 (혹시나 하는 안전장치)
-        total_prob = np.sum(policy_vector)
-        if total_prob > 0:
-            policy_vector = policy_vector / total_prob
-        
-        return policy_vector
 
 def calculate_compression_ratio(original_data, compact_data: CompactSelfPlayData) -> dict:
     """압축 비율 계산"""
@@ -282,8 +260,8 @@ def calculate_compression_ratio(original_data, compact_data: CompactSelfPlayData
     for state in original_data.game_states:
         # state_tensor: (2, 10, 17) * 4 bytes
         state_tensor_size = 2 * 10 * 17 * 4
-        # policy_target: (8246,) * 4 bytes  
-        policy_size = 8246 * 4
+        # policy_target: 박스 리스트 [(r1,c1,r2,c2,conf)] * (4*4+4) bytes
+        policy_size = len(state.policy_target) * (4 * 4 + 4)  # 4개 좌표 + 1개 확률
         metadata_size = 20  # 기타 메타데이터
         original_size += state_tensor_size + policy_size + metadata_size
     

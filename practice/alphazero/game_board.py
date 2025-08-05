@@ -21,13 +21,6 @@ try:
             winner = super().get_winner()
             return winner if winner != -1 else None
         
-        def encode_move(self, r1, c1, r2, c2):
-            result = super().encode_move(r1, c1, r2, c2)
-            return result if result != -1 else None
-        
-        def decode_action(self, action_idx):
-            result = super().decode_action(action_idx)
-            return result if result != (-1, -1, -1, -1) else None
         
         def get_state_tensor(self, perspective_player):
             state_list = super().get_state_tensor(perspective_player)
@@ -62,45 +55,6 @@ except ImportError:
             self.game_over = False
             self.winner = None
             
-            # 액션 공간 매핑 테이블 생성
-            self.action_to_move = {}
-            self.move_to_action = {}
-            self._build_action_mapping()
-            
-        
-        def _build_action_mapping(self):
-            """액션 인덱스와 움직임 간의 매핑 테이블 생성"""
-            action_idx = 0
-            
-            # 모든 가능한 직사각형에 대해 매핑 생성
-            for r1 in range(self.R):
-                for c1 in range(self.C):
-                    for r2 in range(r1, self.R):
-                        for c2 in range(c1, self.C):
-                            area = (r2 - r1 + 1) * (c2 - c1 + 1)
-                            if area >= 2:  # 최소 2칸 이상
-                                move = (r1, c1, r2, c2)
-                                self.action_to_move[action_idx] = move
-                                self.move_to_action[move] = action_idx
-                                action_idx += 1
-            
-            # 패스 액션 추가
-            self.pass_action_idx = action_idx
-            self.action_to_move[action_idx] = (-1, -1, -1, -1)
-            self.move_to_action[(-1, -1, -1, -1)] = action_idx
-        
-        def get_action_space_size(self) -> int:
-            """액션 공간 크기 반환"""
-            return len(self.action_to_move)
-        
-        def encode_move(self, r1: int, c1: int, r2: int, c2: int) -> Optional[int]:
-            """움직임을 액션 인덱스로 변환"""
-            move = (r1, c1, r2, c2)
-            return self.move_to_action.get(move)
-        
-        def decode_action(self, action_idx: int) -> Optional[Tuple[int, int, int, int]]:
-            """액션 인덱스를 움직임으로 변환"""
-            return self.action_to_move.get(action_idx)
         
         def copy(self):
             """게임 보드 복사본 생성"""
@@ -110,8 +64,6 @@ except ImportError:
             new_board.pass_count = self.pass_count
             new_board.game_over = self.game_over
             new_board.winner = self.winner
-            new_board.action_to_move = self.action_to_move.copy()
-            new_board.move_to_action = self.move_to_action.copy()
             return new_board
         
         def get_valid_moves(self) -> List[Tuple[int, int, int, int]]:

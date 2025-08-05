@@ -1,17 +1,15 @@
 import numpy as np
-import random
 import time
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict
 from dataclasses import dataclass
 from game_board import GameBoard
 from mcts import MCTS
-from data_augmentation import DataAugmentation
 
 @dataclass
 class GameState:
     """게임 상태 정보"""
     state_tensor: np.ndarray  # (2, 10, 17)
-    policy_target: np.ndarray  # (action_space_size,)
+    policy_target: List[Tuple[int, int, int, int, float]]  # AlphaZero 정책 타겟 (박스 형태)
     player: int
     move_number: int
     mcts_simulations: int  # 실제 수행된 MCTS 시뮬레이션 횟수
@@ -42,13 +40,7 @@ class SelfPlayGenerator:
             num_threads=num_threads, batch_size=batch_size
         )
         self.temperature = temperature
-        self.num_simulations = num_simulations
-        self.engine_type = engine_type
-        self.num_threads = num_threads
-        self.batch_size = batch_size
         
-        # 데이터 증강기 (한 번만 초기화)
-        self.augmenter = None
         
     def play_game(self, initial_board: List[List[int]], verbose: bool = False) -> SelfPlayData:
         """한 게임 자기대국 실행"""
@@ -71,9 +63,9 @@ class SelfPlayGenerator:
             if (-1, -1, -1, -1) not in valid_moves:
                 valid_moves.append((-1, -1, -1, -1))
             
-            # 최적화된 MCTS 호출 (한 번에 모든 정보 획득)
+            # 최적화된 MCTS 호출 (YOLO 스타일 박스 데이터)
             try:
-                best_move, action_probs, policy_vector, actual_simulations = self.mcts.get_move_and_probs(
+                best_move, action_probs, box_targets, actual_simulations = self.mcts.get_move_and_box_data(
                     game_board, current_player, self.temperature
                 )
                 total_simulations += actual_simulations
@@ -84,7 +76,7 @@ class SelfPlayGenerator:
                 # 게임 상태 저장
                 game_state = GameState(
                     state_tensor=state_tensor.copy(),
-                    policy_target=policy_vector.copy(),
+                    policy_target=box_targets.copy(),
                     player=current_player,
                     move_number=move_count,
                     mcts_simulations=actual_simulations,
@@ -215,10 +207,11 @@ class SelfPlayGenerator:
         
         return games_data
     
-    def collect_training_data(self, games_data: List[SelfPlayData]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """게임 데이터를 훈련용 형태로 변환"""
+    
+    def collect_yolo_training_data(self, games_data: List[SelfPlayData]) -> Tuple[np.ndarray, List[List[Tuple[int, int, int, int, float]]], np.ndarray]:
+        """게임 데이터를 AlphaZero 훈련용 형태로 변환"""
         if not games_data:
-            return np.array([]), np.array([]), np.array([])
+            return np.array([]), [], np.array([])
         
         states = []
         policy_targets = []
@@ -243,47 +236,18 @@ class SelfPlayGenerator:
                 value_targets.append(value_target)
         
         if not states:
-            return np.array([]), np.array([]), np.array([])
+            return np.array([]), [], np.array([])
         
         # numpy 배열로 변환
         states = np.stack(states)  # (N, 2, 10, 17)
-        policy_targets = np.stack(policy_targets)  # (N, action_space_size)
         value_targets = np.array(value_targets, dtype=np.float32)  # (N,)
         
         print(f"Collected training data shapes:")
         print(f"  States: {states.shape}")
-        print(f"  Policy targets: {policy_targets.shape}")
+        print(f"  Policy targets: {len(policy_targets)} samples")
         print(f"  Value targets: {value_targets.shape}")
         
         return states, policy_targets, value_targets
     
-    def collect_training_data_with_augmentation(self, games_data: List[SelfPlayData], 
-                                               use_augmentation: bool = True) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """게임 데이터를 훈련용 형태로 변환 (4배 데이터 증강 포함)"""
-        if not games_data:
-            return np.array([]), np.array([]), np.array([])
-        
-        # 기본 훈련 데이터 수집
-        states, policy_targets, value_targets = self.collect_training_data(games_data)
-        
-        if not use_augmentation or len(states) == 0:
-            return states, policy_targets, value_targets
-        
-        # 데이터 증강 초기화 (한 번만)
-        if self.augmenter is None:
-            # Initialize data augmentation
-            self.augmenter = DataAugmentation()
-        
-        # Apply 4x data augmentation
-        augmented_states, augmented_policies, augmented_values = self.augmenter.augment_training_data(
-            states, policy_targets, value_targets
-        )
-        
-        print(f"Final augmented data shapes:")
-        print(f"  States: {augmented_states.shape}")
-        print(f"  Policy targets: {augmented_policies.shape}")
-        print(f"  Value targets: {augmented_values.shape}")
-        
-        return augmented_states, augmented_policies, augmented_values
 
 

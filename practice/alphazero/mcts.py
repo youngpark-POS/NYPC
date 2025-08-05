@@ -96,7 +96,7 @@ class NeuralNetworkBatchProcessor:
         if not batch:
             return
         
-        # 개별 처리 (아직 배치 최적화 안됨)
+        # 개별 처리 (배치 처리 기능 미구현)
         for request in batch:
             try:
                 policy_probs, value = self.neural_network.predict(
@@ -522,44 +522,21 @@ class MCTS:
                                temperature: float = 1.0) -> Tuple[Dict[Tuple[int, int, int, int], float], int]:
         """액션 확률 분포 반환 (훈련 데이터용)"""
         root, actual_simulations = self.search(state, perspective_player)
-        self._last_root = root  # 디버깅용 루트 노드 저장
         return root.get_action_probs(temperature), actual_simulations
     
-    def get_policy_vector(self, state: GameBoard, perspective_player: int, 
-                         temperature: float = 1.0) -> Tuple[np.ndarray, int]:
-        """전체 액션 공간에 대한 정책 벡터 반환"""
-        action_probs, actual_simulations = self.get_action_probabilities(state, perspective_player, temperature)
-        action_space_size = state.get_action_space_size()
-        
-        policy_vector = np.zeros(action_space_size, dtype=np.float32)
-        
-        for move, prob in action_probs.items():
-            action_idx = state.encode_move(*move)
-            if action_idx is not None:
-                policy_vector[action_idx] = prob
-        
-        # 정규화
-        if np.sum(policy_vector) > 0:
-            policy_vector = policy_vector / np.sum(policy_vector)
-        else:
-            # 모든 확률이 0이면 균등 분포
-            policy_vector.fill(1.0 / action_space_size)
-        
-        return policy_vector, actual_simulations
     
-    def get_move_and_probs(self, state: GameBoard, perspective_player: int, 
-                          temperature: float = 1.0) -> Tuple[Tuple[int, int, int, int], Dict, np.ndarray, int]:
+    def get_move_and_box_data(self, state: GameBoard, perspective_player: int, 
+                             temperature: float = 1.0) -> Tuple[Tuple[int, int, int, int], Dict, List[Tuple[int, int, int, int, float]], int]:
         """
-        최적화된 메서드: 한 번의 MCTS 검색으로 모든 정보 반환
+        최적화된 메서드: 한 번의 MCTS 검색으로 모든 정보 반환 (YOLO 스타일)
         Returns:
             best_move: 선택된 움직임
             action_probs: 액션 확률 분포
-            policy_vector: 8246차원 정책 벡터
+            box_targets: YOLO 박스 훈련 데이터
             actual_simulations: 실제 시뮬레이션 횟수
         """
         # 한 번만 검색 실행
         root, actual_simulations = self.search(state, perspective_player)
-        self._last_root = root  # 디버깅용
         
         # 1. 액션 확률 분포 계산
         action_probs = root.get_action_probs(temperature)
@@ -577,22 +554,14 @@ class MCTS:
             best_action_idx = np.random.choice(len(actions), p=probs)
             best_move = actions[best_action_idx]
         
-        # 3. 정책 벡터 생성
-        action_space_size = state.get_action_space_size()
-        policy_vector = np.zeros(action_space_size, dtype=np.float32)
-        
+        # 3. AlphaZero 정책 훈련 데이터 생성
+        policy_target = []
         for move, prob in action_probs.items():
-            action_idx = state.encode_move(*move)
-            if action_idx is not None:
-                policy_vector[action_idx] = prob
+            if len(move) >= 4 and move != (-1, -1, -1, -1):  # 패스 제외
+                r1, c1, r2, c2 = move
+                policy_target.append((r1, c1, r2, c2, prob))
         
-        # 정규화
-        if np.sum(policy_vector) > 0:
-            policy_vector = policy_vector / np.sum(policy_vector)
-        else:
-            policy_vector.fill(1.0 / action_space_size)
-        
-        return best_move, action_probs, policy_vector, actual_simulations
+        return best_move, action_probs, policy_target, actual_simulations
 
 class MCTSPlayer:
     """MCTS를 사용하는 플레이어"""
@@ -615,12 +584,19 @@ class MCTSPlayer:
         move, _ = self.mcts.get_best_move(state, self.player_id, self.temperature)
         return move
     
-    def get_training_data(self, state: GameBoard) -> Tuple[np.ndarray, np.ndarray]:
-        """훈련 데이터 생성 (상태, 정책)"""
+    def get_training_data(self, state: GameBoard) -> Tuple[np.ndarray, List[Tuple[int, int, int, int, float]]]:
+        """훈련 데이터 생성 (상태, AlphaZero 정책 타겟)"""
         if self.player_id is None:
             raise ValueError("Player ID not set")
         
         state_tensor = state.get_state_tensor(self.player_id)
-        policy_vector, _ = self.mcts.get_policy_vector(state, self.player_id, self.temperature)
+        action_probs, _ = self.mcts.get_action_probabilities(state, self.player_id, self.temperature)
         
-        return state_tensor, policy_vector
+        # 액션 확률을 정책 타겟으로 변환
+        policy_target = []
+        for move, prob in action_probs.items():
+            if len(move) >= 4 and move != (-1, -1, -1, -1):  # 패스 제외
+                r1, c1, r2, c2 = move
+                policy_target.append((r1, c1, r2, c2, prob))
+        
+        return state_tensor, policy_target

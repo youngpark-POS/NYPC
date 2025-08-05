@@ -9,11 +9,26 @@ import time
 from neural_network import AlphaZeroNet, AlphaZeroTrainer
 from self_play import SelfPlayGenerator, SelfPlayData
 
-class AlphaZeroDataset(Dataset):
-    """알파제로 훈련 데이터셋 (8246 크기 고정 정책 타겟)"""
-    def __init__(self, states: np.ndarray, policy_targets: np.ndarray, value_targets: np.ndarray):
+def custom_collate_fn(batch):
+    """
+    가변 길이 policy_targets를 처리하는 커스텀 collate 함수
+    """
+    states, policy_targets, value_targets = zip(*batch)
+    
+    # states와 value_targets는 일반적으로 처리
+    states = torch.stack(states)
+    value_targets = torch.stack(value_targets)
+    
+    # policy_targets는 리스트로 유지 (가변 길이)
+    policy_targets = list(policy_targets)
+    
+    return states, policy_targets, value_targets
+
+class TrainingDataset(Dataset):
+    """알파제로 훈련 데이터셋"""
+    def __init__(self, states: np.ndarray, policy_targets: List[List[Tuple[int, int, int, int, float]]], value_targets: np.ndarray):
         self.states = torch.FloatTensor(states)
-        self.policy_targets = torch.FloatTensor(policy_targets)  # 8246 크기 고정
+        self.policy_targets = policy_targets
         self.value_targets = torch.FloatTensor(value_targets)
     
     def __len__(self):
@@ -76,7 +91,7 @@ class TrainingManager:
     
     
     def train_epoch(self, dataloader: DataLoader, verbose: bool = True) -> dict:
-        """한 에포크 훈련 (8246 크기 고정 정책 타겟)"""
+        """한 에포크 훈련 (YOLO 박스 타겟)"""
         total_losses = []
         policy_losses = []
         value_losses = []
@@ -84,8 +99,8 @@ class TrainingManager:
         self.model.train()
         
         for batch_idx, (states, policy_targets, value_targets) in enumerate(dataloader):
-            # 8246 크기 고정 타겟으로 훈련
-            loss_info = self.trainer.train_step(states.numpy(), policy_targets.numpy(), value_targets.numpy())
+            # 정책 타겟으로 훈련
+            loss_info = self.trainer.train_step(states.numpy(), policy_targets, value_targets.numpy())
             
             total_losses.append(loss_info['total_loss'])
             policy_losses.append(loss_info['policy_loss'])
@@ -128,25 +143,24 @@ class TrainingManager:
             # 새 게임만 사용
             training_games = game_data_list
         
-        # 3. 데이터 수집 (4배 증강 적용)
+        # 3. 데이터 수집
         from self_play import SelfPlayGenerator
         generator = SelfPlayGenerator(self.model)
-        states, policy_targets, value_targets = generator.collect_training_data_with_augmentation(training_games, use_augmentation=True)
+        states, policy_targets, value_targets = generator.collect_yolo_training_data(training_games)
         
         if len(states) == 0:
             print("No training data available!")
             return {'total_loss': 0, 'policy_loss': 0, 'value_loss': 0}
         
-        # 4배 증강으로 인한 배치 크기 조정
-        adjusted_batch_size = max(8, batch_size // 4)  # 최소 8, 기본의 1/4
+        # 배치 크기 조정
+        adjusted_batch_size = max(8, batch_size)
         
         if verbose:
             print(f"Training on {len(states)} samples for {epochs} epochs")
-            # Batch size adjusted for 4x augmentation
         
-        # 데이터셋 생성 (8246 크기 고정 policy_targets)
-        dataset = AlphaZeroDataset(states, policy_targets, value_targets)
-        dataloader = DataLoader(dataset, batch_size=adjusted_batch_size, shuffle=True)
+        # 데이터셋 생성
+        dataset = TrainingDataset(states, policy_targets, value_targets)
+        dataloader = DataLoader(dataset, batch_size=adjusted_batch_size, shuffle=True, collate_fn=custom_collate_fn)
         
         # 훈련 실행
         epoch_stats = {'total_loss': 0, 'policy_loss': 0, 'value_loss': 0}
@@ -211,19 +225,15 @@ class TrainingManager:
         print(f"Binary model saved to {filepath}")
     
     def evaluate_model(self, test_data: List[SelfPlayData]) -> dict:
-        """모델 성능 평가"""
+        """모델 성능 평가 - 가치 예측 정확도만 측정"""
         self.model.eval()
         
         from self_play import SelfPlayGenerator
         generator = SelfPlayGenerator(self.model)
-        states, policy_targets, value_targets = generator.collect_training_data(test_data)
+        states, _, value_targets = generator.collect_yolo_training_data(test_data)
         
         if len(states) == 0:
-            return {'accuracy': 0.0, 'value_mae': 0.0}
-        
-        total_samples = len(states)
-        correct_predictions = 0
-        value_errors = []
+            return {'value_mae': 0.0, 'samples': 0}
         
         with torch.no_grad():
             states_tensor = torch.FloatTensor(states).to(self.model.device)
@@ -233,15 +243,12 @@ class TrainingManager:
             predicted_values = predicted_values.squeeze()
             
             value_errors = torch.abs(predicted_values - value_targets_tensor).cpu().numpy()
-            correct_predictions = total_samples // 2  # 임시값
         
-        accuracy = correct_predictions / total_samples if total_samples > 0 else 0.0
         value_mae = np.mean(value_errors) if len(value_errors) > 0 else 0.0
         
         return {
-            'accuracy': accuracy,
             'value_mae': value_mae,
-            'samples': total_samples
+            'samples': len(states)
         }
     
     def get_training_stats(self) -> dict:

@@ -19,7 +19,6 @@ sys.path.append(script_dir)
 if os.path.basename(os.getcwd()) != 'alphazero':
     sys.path.append(os.path.join(os.getcwd(), 'practice', 'alphazero'))
 
-from game_board import GameBoard
 from neural_network import AlphaZeroNet
 from self_play import SelfPlayGenerator
 from training import TrainingManager
@@ -98,16 +97,9 @@ def main():
     initial_board = generate_random_board()
     print(f"Using random boards for training (10x17)")
     
-    # 모델 생성 (올바른 액션 공간 크기로)
-    temp_board = [[1] * 17 for _ in range(10)]
-    from game_board import GameBoard
-    temp_game = GameBoard(temp_board)
-    action_space_size = temp_game.get_action_space_size()
-    
-    model = AlphaZeroNet(hidden_channels=128, action_space_size=action_space_size)
-    if args.verbose:
-        print(f"Model: {sum(p.numel() for p in model.parameters())} parameters, action space: {action_space_size}")
-    
+    # 모델 생성 (올바른 액션 공간 크기로)    
+    model = AlphaZeroNet(hidden_channels=128)
+
     # GPU/CPU 정보
     device_info = f"GPU: {torch.cuda.get_device_name()}" if torch.cuda.is_available() else "CPU"
     print(f"Device: {device_info}")
@@ -197,13 +189,6 @@ def main():
         
         # 3. 최신 모델만 저장
         trainer.save_model("latest_model.pth")
-        
-        # 4. 간단한 성능 평가
-        if len(game_data_list) > 0:
-            eval_data = game_data_list[:min(5, len(game_data_list))]  # 5게임 샘플만 평가
-            eval_stats = trainer.evaluate_model(eval_data)
-            print(f"Evaluation - Accuracy: {eval_stats['accuracy']:.3f}, "
-                  f"Value MAE: {eval_stats['value_mae']:.3f}")
         
         print(f"Iteration {iteration + 1} completed! Model saved as latest_model.pth")
     
