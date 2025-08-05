@@ -43,47 +43,43 @@ class AlphaZeroNet(nn.Module):
     def __init__(self, input_channels=2, hidden_channels=128, board_height=10, board_width=17):
         super(AlphaZeroNet, self).__init__()
         
-        # 액션 공간 크기 계산 (모든 가능한 직사각형 + 패스)
-        total_actions = 0
-        for r1 in range(board_height):
-            for c1 in range(board_width):
-                for r2 in range(r1, board_height):
-                    for c2 in range(c1, board_width):
-                        area = (r2 - r1 + 1) * (c2 - c1 + 1)
-                        if area >= 2:
-                            total_actions += 1
-        self.action_space_size = total_actions + 1  # +1 for pass
-        
+        self.device = torch.device('cpu')
         self.board_height = board_height
         self.board_width = board_width
         
-        # 백본 네트워크
+        # 백본 네트워크 (입력층 + 4개 잔차블록)
         self.input_conv = nn.Conv2d(input_channels, hidden_channels, kernel_size=3, padding=1)
         self.input_bn = nn.BatchNorm2d(hidden_channels)
+        
         self.res_block1 = ResidualBlock(hidden_channels)
         self.res_block2 = ResidualBlock(hidden_channels)
+        self.res_block3 = ResidualBlock(hidden_channels)
+        self.res_block4 = ResidualBlock(hidden_channels)
         
-        # 정책 헤드
-        self.policy_conv = nn.Conv2d(hidden_channels, 1, kernel_size=1)
-        self.policy_bn = nn.BatchNorm2d(1)
-        self.policy_fc = nn.Linear(1 * board_height * board_width, self.action_space_size)
+        # 정책 헤드 (9채널 YOLO 스타일 출력)
+        # 3개 앵커 × (delta_r, delta_c, confidence) = 9채널
+        self.policy_conv = nn.Conv2d(hidden_channels, 9, kernel_size=1)
+        self.policy_bn = nn.BatchNorm2d(9)
         
-        # 가치 헤드
+        # 가치 헤드 (1채널 컨볼루션 + FC)
         self.value_conv = nn.Conv2d(hidden_channels, 1, kernel_size=1)
         self.value_bn = nn.BatchNorm2d(1)
         self.value_fc1 = nn.Linear(board_height * board_width, hidden_channels)
         self.value_fc2 = nn.Linear(hidden_channels, 1)
-    
+        
+        # 모델을 CPU로 설정
+        self.to(self.device)
+        
     def forward(self, x):
         # 백본
         x = F.relu(self.input_bn(self.input_conv(x)))
         x = self.res_block1(x)
         x = self.res_block2(x)
+        x = self.res_block3(x)
+        x = self.res_block4(x)
         
-        # 정책 헤드
-        policy = F.relu(self.policy_bn(self.policy_conv(x)))
-        policy = policy.view(policy.size(0), -1)
-        policy_logits = self.policy_fc(policy)
+        # 정책 헤드 (YOLO 스타일)
+        policy_output = self.policy_bn(self.policy_conv(x))  # (batch, 9, H, W)
         
         # 가치 헤드
         value = F.relu(self.value_bn(self.value_conv(x)))
@@ -91,7 +87,7 @@ class AlphaZeroNet(nn.Module):
         value = F.relu(self.value_fc1(value))
         value = torch.tanh(self.value_fc2(value))
         
-        return policy_logits, value
+        return policy_output, value
 
 # ================================
 # 게임 로직 클래스 (sample_code.py 기반)
@@ -107,36 +103,11 @@ class Game:
         self.model = None
         self.device = torch.device('cpu')  # CPU 사용
         
-        # 액션 매핑 테이블 생성
-        self.action_to_move = {}
-        self.move_to_action = {}
-        self._build_action_mapping()
-        
         # 모델 로드 시도
         self.load_model()
     
-    def _build_action_mapping(self):
-        """액션 인덱스와 움직임 간의 매핑 테이블 생성"""
-        action_idx = 0
-        R, C = 10, 17
-        
-        for r1 in range(R):
-            for c1 in range(C):
-                for r2 in range(r1, R):
-                    for c2 in range(c1, C):
-                        area = (r2 - r1 + 1) * (c2 - c1 + 1)
-                        if area >= 2:
-                            move = (r1, c1, r2, c2)
-                            self.action_to_move[action_idx] = move
-                            self.move_to_action[move] = action_idx
-                            action_idx += 1
-        
-        # 패스 액션
-        self.action_to_move[action_idx] = (-1, -1, -1, -1)
-        self.move_to_action[(-1, -1, -1, -1)] = action_idx
-    
     def load_model(self):
-        """data.bin에서 모델 로드"""
+        """data.bin에서 모델 로드 (현재 save_model_as_binary 형식)"""
         if not TORCH_AVAILABLE:
             return
         
@@ -152,11 +123,16 @@ class Game:
             # 모델 생성
             self.model = AlphaZeroNet()
             
-            # data.bin 로드
+            # data.bin 로드 (pickle로 저장된 numpy 배열들)
             with open(model_path, 'rb') as f:
-                model_data = pickle.load(f)
-                self.model.load_state_dict(model_data)
+                binary_data = pickle.load(f)
             
+            # numpy 배열들을 텐서로 변환하여 state_dict 생성
+            state_dict = {}
+            for key, numpy_array in binary_data.items():
+                state_dict[key] = torch.from_numpy(numpy_array)
+            
+            self.model.load_state_dict(state_dict)
             self.model.eval()
             print("Neural network model loaded successfully", file=sys.stderr)
             
@@ -176,14 +152,14 @@ class Game:
             for j in range(17):
                 cell = self.board[i][j]
                 if cell > 0:
-                    # 버섯 값 정규화 (1-9 -> 0.1-0.9)
+                    # 버섯 값을 정규화 (1-9 -> 0.1-0.9)
                     state[0][i][j] = cell / 10.0
-                elif cell < 0:
-                    # 점령된 칸 (-1: 플레이어 0, -2: 플레이어 1)
-                    if cell == -(player_perspective + 1):
-                        state[1][i][j] = 1.0  # 내가 점령한 칸
-                    else:
-                        state[1][i][j] = -1.0  # 상대가 점령한 칸
+                elif cell == -(player_perspective + 1):
+                    # 현재 플레이어가 점령한 칸
+                    state[1][i][j] = 1.0
+                elif cell == -(2 - player_perspective):
+                    # 상대 플레이어가 점령한 칸
+                    state[1][i][j] = -1.0
         
         return state
     
@@ -202,8 +178,8 @@ class Game:
         return valid_moves
     
     def neural_network_predict(self, valid_moves):
-        """신경망을 사용한 움직임 예측"""
-        if not TORCH_AVAILABLE or self.model is None or not valid_moves:
+        """신경망을 사용한 움직임 예측 (현재 프레임워크와 동일한 로직)"""
+        if not TORCH_AVAILABLE or self.model is None:
             return None
         
         try:
@@ -213,30 +189,53 @@ class Game:
                 return None
             
             # 텐서 변환
-            state_tensor = torch.FloatTensor(state_tensor).unsqueeze(0)
+            state_tensor = torch.FloatTensor(state_tensor).unsqueeze(0)  # (1, 2, 10, 17)
             
             with torch.no_grad():
-                policy_logits, value = self.model(state_tensor)
-                policy_logits = policy_logits.squeeze(0)
+                policy_output, value = self.model(state_tensor)  # (1, 9, 10, 17), (1, 1)
             
-            # 유효한 움직임들에 대한 확률 계산
-            valid_indices = []
+            # 유효한 움직임이 없으면 패스만 가능
+            if not valid_moves:
+                return (-1, -1, -1, -1)
+            
+            # valid_moves에 대한 confidence 직접 추출
+            confidences = []
+            _, _, H, W = policy_output.shape
+            
             for move in valid_moves:
-                action_idx = self.move_to_action.get(move)
-                if action_idx is not None:
-                    valid_indices.append(action_idx)
+                if len(move) >= 4 and move != (-1, -1, -1, -1):  # 패스 제외
+                    r1, c1, r2, c2 = move
+                    best_confidence = 0.0
+                    
+                    # 각 앵커에서 가장 높은 매칭 confidence 찾기
+                    for anchor in range(3):
+                        delta_r_raw = policy_output[0, anchor*3, r1, c1]
+                        delta_c_raw = policy_output[0, anchor*3+1, r1, c1] 
+                        conf_raw = policy_output[0, anchor*3+2, r1, c1]
+                        
+                        # 예측 좌표 계산
+                        delta_r = torch.sigmoid(delta_r_raw) * 9
+                        delta_c = torch.sigmoid(delta_c_raw) * 16
+                        pred_r2 = int(torch.round(torch.clamp(r1 + delta_r, 0, H-1)).item())
+                        pred_c2 = int(torch.round(torch.clamp(c1 + delta_c, 0, W-1)).item())
+                        
+                        # 완벽한 매칭인 경우 confidence 사용
+                        if pred_r2 == r2 and pred_c2 == c2:
+                            confidence = torch.sigmoid(conf_raw).item()
+                            if confidence > best_confidence:
+                                best_confidence = confidence
+                    
+                    confidences.append(best_confidence if best_confidence > 0 else 1e-6)
+                else:
+                    # 패스는 기본 confidence
+                    confidences.append(1e-6)
             
-            if not valid_indices:
-                return None
-            
-            # 유효한 액션들의 로짓만 추출
-            valid_logits = policy_logits[valid_indices]
-            
-            # 소프트맥스 적용
-            probs = F.softmax(valid_logits, dim=0)
+            # Softmax로 확률 분포 계산
+            confidence_tensor = torch.tensor(confidences, dtype=torch.float32)
+            move_probs = F.softmax(confidence_tensor, dim=0)
             
             # 가장 높은 확률의 움직임 선택
-            best_idx = torch.argmax(probs).item()
+            best_idx = torch.argmax(move_probs).item()
             return valid_moves[best_idx]
             
         except Exception as e:

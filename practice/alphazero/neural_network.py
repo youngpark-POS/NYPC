@@ -317,19 +317,28 @@ class AlphaZeroTrainer:
         checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         
-        # optimizer 상태 초기화 (한 번도 실행되지 않은 경우를 위해)
-        dummy_loss = torch.tensor(0.0, requires_grad=True, device=self.device)
-        dummy_loss.backward()
-        self.optimizer.step()
-        self.optimizer.zero_grad()
-        
-        # 이제 optimizer state_dict 로드
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        # optimizer 상태 로딩 시도
+        optimizer_has_state = False
+        try:
+            # optimizer 상태 초기화 (한 번도 실행되지 않은 경우를 위해)
+            dummy_loss = torch.tensor(0.0, requires_grad=True, device=self.device)
+            dummy_loss.backward()
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+            
+            # optimizer state_dict 로드
+            if 'optimizer_state_dict' in checkpoint:
+                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                optimizer_has_state = True
+        except Exception as e:
+            print(f"Warning: Could not load optimizer state: {e}")
+            optimizer_has_state = False
         
         # 검증 정보 반환
         return {
             'parameters_match': True,
-            'model_loaded': True
+            'model_loaded': True,
+            'optimizer_has_state': optimizer_has_state
         }
     
     def save_model_as_binary(self, filepath: str):
