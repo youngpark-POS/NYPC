@@ -38,6 +38,67 @@ def calculate_basic_distributions():
     
     return basic_distributions, basic_expected
 
+def calculate_bonus_for_single_number(selected_number):
+    """단일 숫자 선택 시 보너스 기댓값 계산 - 올바른 6^6 방식"""
+    from itertools import product
+    
+    # 기본 분포에서 직접 사용 (0~5개만, 5개 이상은 이미 합쳐짐)
+    basic_distributions, _ = calculate_basic_distributions()
+    
+    # 선택된 숫자의 점수 분포 (0~5개 사용)
+    selected_distribution = []
+    for count, prob in basic_distributions[selected_number]:
+        score = count * selected_number * 1000
+        selected_distribution.append((score, prob))
+    
+    # 나머지 5개 숫자들의 점수 분포 (각각 0~5개 사용)
+    other_numbers = [i for i in range(1, 7) if i != selected_number]
+    other_distributions = []
+    
+    for num in other_numbers:
+        dist = []
+        for count, prob in basic_distributions[num]:
+            score = count * num * 1000
+            dist.append((score, prob))
+        other_distributions.append(dist)
+    
+    # 보너스 달성 확률 계산
+    bonus_prob = 0
+    total_combinations = 0
+    
+    for selected_score, selected_prob in selected_distribution:
+        for combo in product(*other_distributions):
+            other_score = sum(score for score, prob in combo)
+            other_prob = 1.0
+            for score, prob in combo:
+                other_prob *= prob
+            
+            total_basic_score = selected_score + other_score
+            combination_prob = selected_prob * other_prob
+            
+            if total_basic_score >= 63000:
+                bonus_prob += combination_prob
+            
+            total_combinations += 1
+    
+    bonus_value = bonus_prob * 35000
+    return bonus_value, bonus_prob, total_combinations
+
+def calculate_bonus_exact():
+    """보너스 기댓값 계산 - 대칭성을 이용한 단순화"""
+    print("보너스 계산 중 (대칭성 이용)...")
+    
+    # 숫자 1만 계산 (모든 숫자가 동일한 보너스를 가지므로)
+    bonus_value, bonus_prob, total_combinations = calculate_bonus_for_single_number(1)
+    
+    print(f"  보너스 확률: {bonus_prob:.6f}")
+    print(f"  보너스 기댓값: {bonus_value:.2f}")
+    print(f"  총 조합 수: {total_combinations:,}")
+    print("  대칭성으로 인해 모든 숫자(1~6)가 동일한 보너스를 가집니다.")
+    
+    # 6개 숫자 모두 동일한 값 반환
+    return [bonus_value] * 6
+
 def calculate_choice_exact():
     """CHOICE: 10개 중 상위 5개 합의 정확한 기댓값"""
     from itertools import product
@@ -223,19 +284,32 @@ def calculate_full_house_exact():
     return 0
 
 def main():
-    """모든 점수 기댓값을 정확히 계산 (보너스 제외)"""
+    """모든 점수 기댓값을 정확히 계산 (보너스 포함)"""
+    import time
     print("=== 요트 게임 정확한 기댓값 계산 ===\n")
     
     # 기본 점수 분포 계산 (보너스 제외)
     basic_distributions, basic_expected = calculate_basic_distributions()
-    print("기본 점수 (1~6):", [round(score, 2) for score in basic_expected])
+    print("기본 점수 (보너스 제외):", [round(score, 2) for score in basic_expected])
+    
+    # 보너스 계산
+    print("\n=== 보너스 계산 시작 ===")
+    start_time = time.time()
+    bonus_expected = calculate_bonus_exact()
+    end_time = time.time()
+    print(f"보너스 계산 완료! 소요 시간: {end_time - start_time:.2f}초")
+    
+    # 보너스 포함 기본 점수
+    basic_expected_with_bonus = [basic + bonus for basic, bonus in zip(basic_expected, bonus_expected)]
+    print("\n보너스 각 숫자별 기댓값:", [round(bonus, 2) for bonus in bonus_expected])
+    print("기본 점수 (보너스 포함):", [round(score, 2) for score in basic_expected_with_bonus])
     
     # 기본 점수 확률 분포 출력 (conditional과 동일한 형식)
     print("\n기본 점수 확률 분포:")
     for num in range(1, 7):
         print(f"숫자 {num}: {basic_distributions[num]}")
     
-    # 조합 점수들 (정확 계산) - CHOICE 포함, 보너스 제외
+    # 조합 점수들 (정확 계산) - CHOICE 포함
     choice = calculate_choice_exact()
     four_kind = calculate_four_of_a_kind_exact()
     full_house = calculate_full_house_exact()
@@ -249,7 +323,7 @@ def main():
     print(f"LARGE_STRAIGHT: {large_straight:.2f}")
     print(f"YACHT: {yacht:.2f}")
     
-    # 최종 리스트 (보너스 제외, CHOICE 포함)
+    # 최종 리스트 (보너스 포함)
     combination_expected = {
         'CHOICE': choice,
         'FOUR_OF_A_KIND': four_kind,
@@ -261,12 +335,15 @@ def main():
     
     result = {
         'basic_distributions': basic_distributions,
-        'basic_expected': basic_expected,
+        'basic_expected': basic_expected_with_bonus,  # 보너스 포함
+        'basic_expected_no_bonus': basic_expected,    # 보너스 제외 (참고용)
+        'bonus_expected': bonus_expected,             # 보너스만
         'combination_expected': combination_expected
     }
     
-    print(f"\n=== 최종 정확 결과 (보너스 제외) ===")
-    print("Basic Expected:", [round(x, 2) for x in basic_expected])
+    print(f"\n=== 최종 정확 결과 (보너스 포함) ===")
+    print("Basic Expected (보너스 포함):", [round(x, 2) for x in basic_expected_with_bonus])
+    print("Bonus Expected:", [round(x, 2) for x in bonus_expected])
     print("Combination Expected:", {k: round(v, 2) for k, v in combination_expected.items()})
     
     return result
