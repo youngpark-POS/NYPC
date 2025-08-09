@@ -139,59 +139,101 @@ def calculate_choice_exact():
 
 
 def calculate_four_of_a_kind_exact():
-    """FOUR_OF_A_KIND: 정확한 확률 계산"""
-    count_dist = max_count_distribution()
+    """FOUR_OF_A_KIND: 다항분포 방식으로 정확한 계산"""
     
-    # 각 숫자별로 4개 이상 나올 확률
-    prob_4_plus_single = sum(prob for count, prob in count_dist.items() if count >= 4)
+    def multinomial_coeff(n, counts):
+        """다항분포 계수 계산"""
+        result = math.factorial(n)
+        for c in counts:
+            result //= math.factorial(c)
+        return result
     
-    # 적어도 하나의 숫자가 4개 이상일 확률 (포함-배제)
-    # P(A1 ∪ A2 ∪ ... ∪ A6) = 6*P(A1) - C(6,2)*P(A1∩A2) + ...
-    # 하지만 10개 주사위로는 동시에 두 숫자가 각각 4개씩 불가능
-    prob_any_4_plus = 6 * prob_4_plus_single - 15 * 0  # P(두 숫자 동시에 4개+) = 0
+    def generate_compositions(n, k, current=[]):
+        """n을 k개 음이 아닌 정수의 합으로 나타내는 모든 방법"""
+        if k == 1:
+            yield current + [n]
+            return
+        
+        for i in range(n + 1):
+            yield from generate_compositions(n - i, k - 1, current + [i])
     
-    # 조건부 기댓값 계산
-    conditional_expected = 0
-    total_conditional_prob = 0
-    
-    for target_num in range(1, 7):
-        for count in range(4, 11):
-            prob_this_count = count_dist[count]
-            if prob_this_count > 0:
-                # count개의 target_num이 있을 때, 5개 선택해서 얻는 점수의 기댓값
-                # 4개는 확정 target_num, 1개는 나머지에서 선택
-                remaining_dice = 10 - count
-                expected_remaining = 0
+    def find_best_four_of_a_kind(counts):
+        """주어진 주사위 개수에서 최적의 포카드 조합 찾기"""
+        best_score = 0
+        
+        # 각 숫자별로 포카드 가능성 확인
+        for target_num in range(1, 7):
+            if counts[target_num-1] >= 4:
+                # 포카드 가능 - 해당 숫자 4개 + 나머지 중 가장 큰 1개
+                remaining_dice = []
+                for num in range(1, 7):
+                    count = counts[num-1]
+                    if num == target_num:
+                        remaining_dice.extend([num] * (count - 4))  # 4개 제외하고 추가
+                    else:
+                        remaining_dice.extend([num] * count)
                 
-                if remaining_dice > 0:
-                    # 나머지 주사위들의 평균값
-                    expected_remaining = 3.5  # 1~6의 평균
+                # 나머지 중 가장 큰 1개 선택
+                if remaining_dice:
+                    largest_remaining = max(remaining_dice)
+                    score = target_num * 4 + largest_remaining
                 else:
-                    expected_remaining = target_num  # 모두 target_num
+                    score = target_num * 4  # 나머지가 없으면 4개만
                 
-                expected_sum = target_num * 4 + expected_remaining
-                weight = prob_this_count / 6  # 각 숫자에 대한 확률
-                
-                conditional_expected += expected_sum * weight
-                total_conditional_prob += weight
+                best_score = max(best_score, score)
+        
+        return best_score
     
-    if total_conditional_prob > 0:
-        conditional_expected /= total_conditional_prob
+    total_expected = 0
     
-    return prob_any_4_plus * conditional_expected * 1000
+    # 10개 주사위의 모든 가능한 조합
+    for counts in generate_compositions(10, 6):
+        # 다항분포 확률
+        prob = multinomial_coeff(10, counts) * (1/6)**10
+        
+        # 이 조합에서 최적의 포카드 점수 찾기
+        best_score = find_best_four_of_a_kind(counts)
+        
+        if best_score > 0:
+            total_expected += prob * best_score * 1000
+    
+    return total_expected
 
 def calculate_yacht_exact():
-    """YACHT: 정확한 확률 계산"""
-    count_dist = max_count_distribution()
+    """YACHT: 다항분포 방식으로 정확한 확률 계산"""
     
-    # 5개 이상 같은 숫자가 나올 확률
-    prob_5_plus_single = sum(prob for count, prob in count_dist.items() if count >= 5)
+    def multinomial_coeff(n, counts):
+        """다항분포 계수 계산"""
+        result = math.factorial(n)
+        for c in counts:
+            result //= math.factorial(c)
+        return result
     
-    # 6개 숫자 중 적어도 하나가 5개 이상일 확률
-    # 최대 하나의 숫자만 5개 이상 가능하므로
-    total_yacht_prob = 6 * prob_5_plus_single
+    def generate_compositions(n, k, current=[]):
+        """n을 k개 음이 아닌 정수의 합으로 나타내는 모든 방법"""
+        if k == 1:
+            yield current + [n]
+            return
+        
+        for i in range(n + 1):
+            yield from generate_compositions(n - i, k - 1, current + [i])
     
-    return total_yacht_prob * 50000
+    def has_yacht(counts):
+        """YACHT 조건 확인 (5개 이상 같은 숫자)"""
+        return any(count >= 5 for count in counts)
+    
+    total_expected = 0
+    
+    # 10개 주사위의 모든 가능한 조합
+    for counts in generate_compositions(10, 6):
+        # 다항분포 확률
+        prob = multinomial_coeff(10, counts) * (1/6)**10
+        
+        # YACHT 조건 확인
+        if has_yacht(counts):
+            total_expected += prob * 50000
+    
+    return total_expected
 
 def calculate_straight_patterns_exact():
     """SMALL/LARGE STRAIGHT 포함-배제 원리로 정확한 확률 계산"""
@@ -237,51 +279,52 @@ def calculate_straight_patterns_exact():
     return prob_small * 15000, prob_large * 30000
 
 def calculate_full_house_exact():
-    """FULL_HOUSE: 정확한 조합론적 계산"""
-    # 3개 이상 + 2개 이상이 동시에 만족되는 경우
+    """FULL_HOUSE: 다항분포 방식으로 정확한 계산 (서로 다른 숫자 3+2만)"""
     
-    total_prob = 0
+    def multinomial_coeff(n, counts):
+        """다항분포 계수 계산"""
+        result = math.factorial(n)
+        for c in counts:
+            result //= math.factorial(c)
+        return result
+    
+    def generate_compositions(n, k, current=[]):
+        """n을 k개 음이 아닌 정수의 합으로 나타내는 모든 방법"""
+        if k == 1:
+            yield current + [n]
+            return
+        
+        for i in range(n + 1):
+            yield from generate_compositions(n - i, k - 1, current + [i])
+    
+    def find_best_full_house(counts):
+        """주어진 주사위 개수에서 최적의 풀하우스 조합 찾기 (서로 다른 숫자만)"""
+        best_score = 0
+        
+        # 모든 가능한 풀하우스 조합 (서로 다른 숫자의 3개 + 2개)
+        for three_num in range(1, 7):
+            if counts[three_num-1] >= 3:
+                for two_num in range(1, 7):
+                    if two_num != three_num and counts[two_num-1] >= 2:
+                        score = three_num * 3 + two_num * 2
+                        best_score = max(best_score, score)
+        
+        return best_score
+    
     total_expected = 0
     
-    # 모든 가능한 (n1, n2, ..., n6) 조합에 대해
-    for n1 in range(11):
-        for n2 in range(11-n1):
-            for n3 in range(11-n1-n2):
-                for n4 in range(11-n1-n2-n3):
-                    for n5 in range(11-n1-n2-n3-n4):
-                        n6 = 10 - n1 - n2 - n3 - n4 - n5
-                        if n6 >= 0:
-                            counts = [n1, n2, n3, n4, n5, n6]
-                            
-                            # 풀하우스 조건: 적어도 하나는 3개 이상, 적어도 하나는 2개 이상
-                            has_3_plus = any(c >= 3 for c in counts)
-                            has_2_plus = sum(1 for c in counts if c >= 2) >= 2
-                            
-                            if has_3_plus and has_2_plus:
-                                # 다항분포 확률
-                                prob = math.factorial(10)
-                                for i, c in enumerate(counts):
-                                    prob *= (1/6)**c / math.factorial(c)
-                                
-                                # 최적 5개 선택 시 기댓값
-                                # 3개+2개 조합에서 최대 합
-                                sorted_indices = sorted(range(6), key=lambda x: (counts[x], x+1), reverse=True)
-                                best_sum = 0
-                                used = 0
-                                
-                                for idx in sorted_indices:
-                                    if used >= 5:
-                                        break
-                                    use_count = min(counts[idx], 5 - used)
-                                    best_sum += use_count * (idx + 1)
-                                    used += use_count
-                                
-                                total_prob += prob
-                                total_expected += prob * best_sum * 1000
+    # 10개 주사위의 모든 가능한 조합
+    for counts in generate_compositions(10, 6):
+        # 다항분포 확률
+        prob = multinomial_coeff(10, counts) * (1/6)**10
+        
+        # 이 조합에서 최적의 풀하우스 점수 찾기
+        best_score = find_best_full_house(counts)
+        
+        if best_score > 0:
+            total_expected += prob * best_score * 1000
     
-    if total_prob > 0:
-        return total_expected / total_prob * total_prob  # 이미 가중평균
-    return 0
+    return total_expected
 
 def main():
     """모든 점수 기댓값을 정확히 계산 (보너스 포함)"""
